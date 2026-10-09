@@ -481,12 +481,17 @@ Check values: the identity line (center 0, edge 0, p1 63,63, p2 127,127) gives
 | 3 Custom | keep the current values | |
 
 Invariants enforced (M:2126-2188):
-* center and edge accept **0..100 only**. Negative values ("Offset"/anti-dead-zone for center,
-  output ceiling for edge) are **refused**, because Flydigi's reader folds bytes > 127 to
-  `127-byte` while its writers use two's complement (M:287-306, F:256-262). Since the core is
-  inert, an **anti-dead-zone can still be expressed in the bank**: `stick_nodes` supports
-  `center < 0` → start = (0, -center). Only the core-byte encoding is ambiguous.
-* **center + edge ≤ 100**, cross-clamped. The field being set gives way (M:2152-2163).
+* center and edge take **-100..100** (Space Station's two-sided sliders). Negative values
+  ("Offset"/anti-dead-zone for center, output ceiling for edge) go **into the bank only**; the core
+  center byte and the extra edge byte stay 0, because Flydigi's reader folds bytes > 127 to
+  `127-byte` while its writers use two's complement (M:287-306, F:256-262). The core is inert, so
+  nothing is lost. Reading back: bank[0] > 50 means center = -(bank[0]-50); bank[8] < 150 means
+  edge = bank[8]-150. A two's-complement core byte from Space Station reads the same way.
+* Interior points are scaled into the box between start and end on **both** axes, as Space
+  Station's renderer does: `(start.x + (end.x-start.x)·p.x/127, start.y + (end.y-start.y)·p.y/127)`.
+  With center, edge ≥ 0 this equals the formula above (start.y = 0, end.y = 100).
+* Zones of the same sign share 100 %: **center + edge ≤ 100** when both are positive,
+  **|center| + |edge| ≤ 100** when both are negative; the edge gives way. Mixed signs are free.
 * Points are clamped 0..127. The bank must be **exactly 9** values, each clamped 0..150. Flydigi's
   writer overruns into isRound, edge and the other stick if given more (M:2094-2104).
 * Editing any node (center, edge, p1, p2) without picking a preset sets type = 3 Custom in both

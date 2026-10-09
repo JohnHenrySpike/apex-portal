@@ -88,10 +88,13 @@ pub struct KeyBinding {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Stick {
     pub kind: u8, // 0 default, 1 quick, 2 slow, 3 custom
-    pub center: u8,
+    /// -100..100 %: > 0 dead zone, < 0 offset (output starts there); 127 =
+    /// the "not a stick" sentinel, compiled as 0.
+    pub center: i8,
     pub p1: (u8, u8),
     pub p2: (u8, u8),
-    pub edge: u8,
+    /// -100..100 %: > 0 outer zone (full output early), < 0 output ceiling.
+    pub edge: i8,
     pub round: bool,
     pub bank: [u8; 9],
 }
@@ -159,8 +162,15 @@ fn stick_nodes(center: f64, edge: f64, p1: (u8, u8), p2: (u8, u8)) -> Vec<(f64, 
     if span <= 0.0 {
         return vec![start, end];
     }
-    let s = 100.0 / 127.0;
-    let interior = |p: (u8, u8)| (start.0 + span * (p.0 as f64 * s) / 100.0, p.1 as f64 * s);
+    // Interior points sit in the box between start and end, as in Space
+    // Station's renderer; with zones >= 0 that box is (start.x, 0)..(end.x, 100).
+    let rise = end.1 - start.1;
+    let interior = |p: (u8, u8)| {
+        (
+            start.0 + span * p.0 as f64 / 127.0,
+            start.1 + rise * p.1 as f64 / 127.0,
+        )
+    };
     vec![start, interior(p1), interior(p2), end]
 }
 
@@ -178,11 +188,39 @@ fn along(nodes: &[(f64, f64)], x: f64) -> f64 {
 }
 
 impl Stick {
+    /// Clamp the zones to -100..100 and keep the curve rising: a dead zone and
+    /// an outer zone, or an offset and a ceiling, share 100 %; the edge gives way.
+    pub fn clamp_zones(&mut self) {
+        self.center = self.center.clamp(-100, 100);
+        self.edge = self.edge.clamp(-100, 100);
+        if self.center >= 0 && self.edge > 0 {
+            self.edge = self.edge.min(100 - self.center);
+        }
+        if self.center < 0 && self.edge < 0 {
+            self.edge = self.edge.max(-100 - self.center);
+        }
+    }
+    /// The polyline the bank is compiled from: start, p1, p2, end, in %.
+    pub fn nodes(&self) -> Vec<(f64, f64)> {
+        let zone = |v: i8| if v > 100 { 0.0 } else { v as f64 };
+        stick_nodes(zone(self.center), zone(self.edge), self.p1, self.p2)
+    }
+    /// The control point (0..127) that puts an interior node at (x, y) %.
+    pub fn point_at(&self, x: f64, y: f64) -> (u8, u8) {
+        let n = self.nodes();
+        let (start, end) = (n[0], n[n.len() - 1]);
+        let along = |v: f64, a: f64, b: f64| {
+            if b > a {
+                ((v - a) / (b - a) * 127.0).clamp(0.0, 127.0) as u8
+            } else {
+                0
+            }
+        };
+        (along(x, start.0, end.0), along(y, start.1, end.1))
+    }
     /// Recompile the 9-point output bank the firmware actually plays.
     pub fn compile(&mut self) {
-        let c = if self.center > 100 { 0 } else { self.center };
-        let e = if self.edge > 100 { 0 } else { self.edge };
-        let nodes = stick_nodes(c as f64, e as f64, self.p1, self.p2);
+        let nodes = self.nodes();
         for i in 0..9 {
             let y = along(&nodes, 100.0 * i as f64 / 8.0).clamp(-50.0, 100.0);
             self.bank[i] = (y.trunc() + 50.0) as u8;
@@ -262,30 +300,49 @@ impl Profile {
         let c = STICK_CORE[side];
         let x = STICK_EXTRA[side];
         let b = &self.blob;
+        let bank: [u8; 9] = b[x + 1..x + 10].try_into().unwrap();
+        // Negative zones live only in the bank (the core bytes stay 0, see
+        // set_stick): an offset lifts bank[0] above 50, a ceiling drops
+        // bank[8] below 150. Space Station's own two's-complement core
+        // bytes (> 100) are read the same way.
+        let mut center = match b[c + 1] {
+            v @ 0..=100 => v as i8,
+            127 => 127,
+            _ => 0,
+        };
+        if center <= 0 && bank[0] > 50 {
+            center = -((bank[0] - 50).min(100) as i8);
+        }
+        let mut edge = if b[x + 11] <= 100 { b[x + 11] as i8 } else { 0 };
+        if edge <= 0 && bank[8] < 150 {
+            edge = -((150 - bank[8].max(50)) as i8);
+        }
         Stick {
             kind: b[c],
-            center: b[c + 1],
+            center,
             p1: (b[c + 2], b[c + 3]),
             p2: (b[c + 4], b[c + 5]),
-            edge: b[x + 11],
+            edge,
             round: b[x + 10] == 1,
-            bank: b[x + 1..x + 10].try_into().unwrap(),
+            bank,
         }
     }
     pub fn set_stick(&mut self, side: usize, mut s: Stick) {
-        s.center = s.center.min(100);
-        s.edge = s.edge.min(100 - s.center);
+        s.clamp_zones();
         s.p1 = (s.p1.0.min(127), s.p1.1.min(127));
         s.p2 = (s.p2.0.min(127), s.p2.1.min(127));
         s.compile();
         let c = STICK_CORE[side];
         let x = STICK_EXTRA[side];
         let b = &mut self.blob;
-        b[c..c + 6].copy_from_slice(&[s.kind, s.center, s.p1.0, s.p1.1, s.p2.0, s.p2.1]);
+        // Negative zones go only into the bank: Space Station writes them as
+        // two's complement but reads them back as 127 - byte.
+        let center = s.center.max(0) as u8;
+        b[c..c + 6].copy_from_slice(&[s.kind, center, s.p1.0, s.p1.1, s.p2.0, s.p2.1]);
         b[x] = s.kind;
         b[x + 1..x + 10].copy_from_slice(&s.bank);
         b[x + 10] = s.round as u8;
-        b[x + 11] = s.edge;
+        b[x + 11] = s.edge.max(0) as u8;
     }
 
     // ---- trigger travel window (0..255)
@@ -714,5 +771,67 @@ mod tests {
         let mut bad = orig.clone();
         bad.blob[145] = 0xFF;
         assert!(bad.check_no_vibration_change(&orig).is_err());
+    }
+
+    #[test]
+    fn offset_and_ceiling_live_only_in_the_bank() {
+        let mut p = factory();
+        let mut s = p.stick(0);
+        s.center = -20;
+        s.edge = -30;
+        p.set_stick(0, s);
+        assert_eq!(p.blob[STICK_CORE[0] + 1], 0);
+        assert_eq!(p.blob[STICK_EXTRA[0] + 11], 0);
+        let back = p.stick(0);
+        assert_eq!((back.center, back.edge), (-20, -30));
+        assert_eq!(back.bank[0], 70);
+        assert_eq!(back.bank[8], 120);
+        assert!(
+            back.bank.windows(2).all(|w| w[0] <= w[1]),
+            "{:?}",
+            back.bank
+        );
+        // the other stick is untouched
+        assert_eq!(p.stick(1), factory().stick(1));
+    }
+
+    #[test]
+    fn space_station_twos_complement_core_reads_from_the_bank() {
+        let mut p = factory();
+        let mut s = p.stick(1);
+        s.center = -15;
+        p.set_stick(1, s);
+        p.blob[STICK_CORE[1] + 1] = (-15i8) as u8; // as Space Station writes it
+        assert_eq!(p.stick(1).center, -15);
+    }
+
+    #[test]
+    fn zones_keep_the_curve_rising() {
+        let clamp = |center, edge| {
+            let mut s = factory().stick(0);
+            (s.center, s.edge) = (center, edge);
+            s.clamp_zones();
+            (s.center, s.edge)
+        };
+        assert_eq!(clamp(70, 50), (70, 30));
+        assert_eq!(clamp(-70, -50), (-70, -30));
+        assert_eq!(clamp(-70, 50), (-70, 50));
+        assert_eq!(clamp(70, -50), (70, -50));
+        assert_eq!(clamp(-120, 0), (-100, 0));
+    }
+
+    #[test]
+    fn handles_map_back_to_their_points() {
+        let mut s = factory().stick(0);
+        (s.center, s.edge) = (-20, 10);
+        for p in [(63, 63), (20, 100), (127, 127), (0, 0)] {
+            s.p1 = p;
+            let at = s.nodes()[1];
+            let back = s.point_at(at.0, at.1);
+            assert!(
+                back.0.abs_diff(p.0) <= 1 && back.1.abs_diff(p.1) <= 1,
+                "{p:?} -> {back:?}"
+            );
+        }
     }
 }

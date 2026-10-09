@@ -648,15 +648,25 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
                 .num_columns(2)
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Мёртвая зона").color(DIM));
-                    custom |= ui
-                        .add(egui::Slider::new(&mut s.center, 0..=100).suffix("%"))
-                        .changed();
+                    ui.label(RichText::new("Центр").color(DIM)).on_hover_text(
+                        "Вправо — мёртвая зона: у центра стик молчит.\n\
+                         Влево — смещение: выход сразу начинается с этого значения, \
+                         чтобы перекрыть встроенную мёртвую зону игры.",
+                    );
+                    custom |= zone_slider(ui, &mut s.center, |v| match v {
+                        v if v < 0 => format!("смещение {} %", -v),
+                        v => format!("мёртвая зона {v} %"),
+                    });
                     ui.end_row();
-                    ui.label(RichText::new("Внешняя зона").color(DIM));
-                    custom |= ui
-                        .add(egui::Slider::new(&mut s.edge, 0..=100).suffix("%"))
-                        .changed();
+                    ui.label(RichText::new("Край").color(DIM)).on_hover_text(
+                        "Вправо — внешняя зона: полный выход раньше упора.\n\
+                         Влево — потолок: даже в упоре выход не доходит до 100 %, \
+                         для точного прицеливания.",
+                    );
+                    custom |= zone_slider(ui, &mut s.edge, |v| match v {
+                        v if v < 0 => format!("потолок {} %", 100 + v),
+                        v => format!("внешняя зона {v} %"),
+                    });
                     ui.end_row();
                     ui.label(RichText::new("Форма хода").color(DIM));
                     segmented(ui, &mut s.round, &[(true, "Круг"), (false, "Квадрат")]);
@@ -665,6 +675,13 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
             if custom {
                 s.kind = 3;
             }
+            if s.center < 0 {
+                ui.add_space(4.0);
+                hint(
+                    ui,
+                    "При смещении центра автокалибровка стика не работает (так написано у Flydigi).",
+                );
+            }
         },
     );
     if s != before {
@@ -672,13 +689,22 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
     }
 }
 
-/// Response curve with two draggable control points. Returns true if dragged.
+/// A two-sided -100..100 % zone slider; `name` words a non-zero value.
+fn zone_slider(ui: &mut egui::Ui, v: &mut i8, name: impl Fn(i32) -> String + 'static) -> bool {
+    ui.add(
+        egui::Slider::new(v, -100..=100).custom_formatter(move |v, _| match v as i32 {
+            0 => "0".into(),
+            v => name(v),
+        }),
+    )
+    .changed()
+}
+
 /// The stick settings with the zones clamped and the bank recompiled, as the
 /// pad would play them.
 fn compiled(s: &profile::Stick) -> profile::Stick {
     let mut c = *s;
-    c.center = c.center.min(100);
-    c.edge = c.edge.min(100 - c.center);
+    c.clamp_zones();
     c.compile();
     c
 }
@@ -765,6 +791,7 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
     });
 }
 
+/// Response curve with two draggable control points. Returns true if dragged.
 fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f32>) -> bool {
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(w, (w * 0.75).min(240.0)), egui::Sense::hover());
@@ -855,10 +882,15 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
         pt.circle_filled(map(m, out), 5.0, Color32::WHITE);
     }
 
-    // Control points (0..127 scale on the pad).
+    // Control points, drawn where their nodes sit between start and end.
     let mut dragged = false;
-    for (i, (px, py)) in [s.p1, s.p2].into_iter().enumerate() {
-        let at = map(px as f32 / 127.0 * 100.0, py as f32 / 127.0 * 100.0);
+    let nodes = shown.nodes();
+    if nodes.len() < 4 {
+        return false;
+    }
+    for i in 0..2 {
+        let (nx, ny) = nodes[i + 1];
+        let at = map(nx as f32, ny as f32);
         let id = ui.id().with(("curve", side, i));
         let r = ui.interact(
             egui::Rect::from_center_size(at, vec2(22.0, 22.0)),
@@ -879,10 +911,7 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
             && let Some(pos) = r.interact_pointer_pos()
         {
             let (x, y) = unmap(pos);
-            let v = (
-                (x.clamp(0.0, 100.0) / 100.0 * 127.0) as u8,
-                (y.clamp(0.0, 100.0) / 100.0 * 127.0) as u8,
-            );
+            let v = shown.point_at(x as f64, y as f64);
             if i == 0 {
                 s.p1 = v;
             } else {
