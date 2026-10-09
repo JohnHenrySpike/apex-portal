@@ -1,73 +1,49 @@
-//! The Apex 5 drawn from vectors: graphite body, the silver V with the
-//! logo and screen, light strips and every button as a hit target.
+//! The Apex 5, drawn from Flydigi's own line drawing.
 //!
-//! Proportions follow the Apex 5 line drawing on Flydigi's own site
-//! (space_station.flydigi.com). Coordinates are in that drawing's 984-wide
-//! space; the pad spans x 160..824 and is scaled to fit.
+//! `assets/apex5.svg` (built by `tools/svg`) is rasterised with resvg at the
+//! exact on-screen size. Key highlights, the moving stick caps, the light
+//! strips, the screen text and the back buttons are painted over it.
+//! Coordinates are the drawing's 984-wide space; the pad spans x 166..818,
+//! y 40..472 and is scaled to fit.
 
 use std::sync::OnceLock;
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
-    Vec2, pos2, vec2,
+    self, Color32, ColorImage, CornerRadius, FontId, Id, Mesh, Pos2, Rect, Sense, Shape, Stroke,
+    StrokeKind, TextureHandle, TextureOptions, Ui, Vec2, pos2, vec2,
 };
+use resvg::{tiny_skia, usvg};
 
 use super::theme::{self, accent, on_accent};
 use super::widgets::lerp_colour;
 
-const X0: f32 = 160.0;
-const W: f32 = 664.0;
-const H_FRONT: f32 = 478.0;
-const H_BACK: f32 = 532.0;
+const SVG: &str = include_str!("../../assets/apex5.svg");
+
+/// The drawing's viewBox: x, y, width, height.
+const VIEW: [f32; 4] = [166.0, 40.0, 652.0, 432.0];
+/// Height with the back-button row below the pad.
+const H_BACK: f32 = 492.0;
 const MID: f32 = 492.0;
+const SCREEN: [f32; 4] = [452.65, 144.48, 531.35, 182.33];
+/// How far a stick cap moves at full deflection.
+const STICK_TRAVEL: f32 = 13.0;
 
-/// Left half of the body outline as cubic segments, from the top centre
-/// round the left grip to the bottom centre. The right half is mirrored.
-const START: [f32; 2] = [MID, 61.0];
-const LEFT_HALF: [[f32; 6]; 6] = [
-    [400.0, 61.0, 310.0, 72.0, 258.0, 99.0],
-    [236.0, 160.0, 205.0, 235.0, 185.0, 295.0],
-    [174.0, 340.0, 166.0, 400.0, 185.0, 440.0],
-    [200.0, 465.0, 228.0, 472.0, 245.0, 463.0],
-    [280.0, 433.0, 325.0, 385.0, 374.0, 374.0],
-    [410.0, 372.0, 450.0, 372.0, MID, 372.0],
-];
-
-const DPAD: [f32; 2] = [409.0, 274.5];
-const LSTICK: [f32; 2] = [331.5, 171.5];
-const RSTICK: [f32; 2] = [571.5, 273.5];
-const SCREEN: [f32; 4] = [453.0, 144.0, 532.0, 182.0];
-
-/// The silver V plate (convex).
-const PLATE: [[f32; 2]; 11] = [
-    [366.0, 71.0],
-    [618.0, 71.0],
-    [622.0, 78.0],
-    [622.0, 88.0],
-    [531.0, 197.0],
-    [514.0, 209.0],
-    [492.0, 211.0],
-    [470.0, 209.0],
-    [453.0, 197.0],
-    [362.0, 88.0],
-    [362.0, 78.0],
-];
-
-/// Light strips along the outer edge of each grip: left bottom→top, then
-/// right top→bottom, so the 12 LEDs run clockwise.
+/// Light strips along the outer edge of each grip, 11 units inside the body
+/// outline: left bottom→top, then right top→bottom, so the 12 LEDs run
+/// clockwise.
 const LEDS: [[f32; 2]; 12] = [
-    [205.0, 418.0],
-    [197.0, 388.0],
-    [197.0, 357.0],
-    [202.0, 325.0],
-    [210.0, 294.0],
-    [221.0, 264.0],
-    [763.0, 264.0],
-    [774.0, 294.0],
-    [782.0, 325.0],
-    [787.0, 357.0],
-    [787.0, 388.0],
-    [779.0, 418.0],
+    [185.4, 416.5],
+    [180.9, 387.7],
+    [182.6, 357.4],
+    [188.3, 326.4],
+    [196.4, 295.0],
+    [205.8, 263.3],
+    [778.2, 263.3],
+    [787.6, 295.0],
+    [795.7, 326.4],
+    [801.4, 357.4],
+    [803.1, 387.7],
+    [798.6, 416.5],
 ];
 
 pub const BACK_KEYS: [(u8, &str); 6] = [
@@ -79,91 +55,34 @@ pub const BACK_KEYS: [(u8, &str); 6] = [
     (23, "RM"),
 ];
 
-const LB: [[f32; 2]; 11] = [
-    [271.0, 100.0],
-    [272.0, 78.0],
-    [283.0, 69.0],
-    [303.0, 59.0],
-    [331.0, 50.0],
-    [360.0, 44.0],
-    [376.0, 44.0],
-    [404.0, 51.0],
-    [434.0, 60.0],
-    [440.0, 66.0],
-    [300.0, 100.0],
+/// Key areas in the drawing (`#keys`), by key id.
+const FRONT_KEYS: [(u8, &str); 17] = [
+    (0, "dpad-up"),
+    (1, "dpad-right"),
+    (2, "dpad-down"),
+    (3, "dpad-left"),
+    (4, "a"),
+    (5, "b"),
+    (6, "view"),
+    (7, "x"),
+    (8, "y"),
+    (9, "menu"),
+    (10, "lb"),
+    (11, "rb"),
+    (12, "lt"),
+    (13, "rt"),
+    (14, "ls"),
+    (15, "rs"),
+    (27, "home"),
 ];
 
-#[derive(Clone, Copy)]
-enum Geom {
-    Circle(f32, f32, f32),
-    Rect(f32, f32, f32, f32, f32),
-    /// Slanted pill between two centres.
-    Capsule(f32, f32, f32, f32, f32),
-    Bumper(bool),
-}
+/// Stick caps are drawn separately so they can move.
+const CAPS: [(u8, &str); 2] = [(14, "ls-cap"), (15, "rs-cap")];
 
-fn mirror(p: [f32; 2]) -> [f32; 2] {
-    [2.0 * MID - p[0], p[1]]
-}
-
-fn geom(id: u8) -> Option<Geom> {
-    let [dx, dy] = DPAD;
-    let (a, l) = (10.0, 40.0);
-    Some(match id {
-        0 => Geom::Rect(dx - a, dy - l, dx + a, dy - a, 4.0),
-        2 => Geom::Rect(dx - a, dy + a, dx + a, dy + l, 4.0),
-        3 => Geom::Rect(dx - l, dy - a, dx - a, dy + a, 4.0),
-        1 => Geom::Rect(dx + a, dy - a, dx + l, dy + a, 4.0),
-        8 => Geom::Circle(656.0, 131.0, 22.0),
-        7 => Geom::Circle(613.0, 174.0, 22.0),
-        5 => Geom::Circle(699.0, 174.0, 22.0),
-        4 => Geom::Circle(656.0, 217.0, 22.0),
-        6 => Geom::Capsule(400.0, 95.0, 421.0, 121.0, 8.0),
-        9 => Geom::Capsule(584.0, 95.0, 563.0, 121.0, 8.0),
-        27 => Geom::Circle(MID, 104.0, 19.0),
-        10 => Geom::Bumper(false),
-        11 => Geom::Bumper(true),
-        12 => Geom::Rect(300.0, 4.0, 404.0, 38.0, 13.0),
-        13 => Geom::Rect(580.0, 4.0, 684.0, 38.0, 13.0),
-        14 => Geom::Circle(LSTICK[0], LSTICK[1], 34.0),
-        15 => Geom::Circle(RSTICK[0], RSTICK[1], 34.0),
-        18..=23 => {
-            let x = 247.0 + (id - 18) as f32 * 84.0;
-            Geom::Rect(x, 500.0, x + 70.0, 528.0, 14.0)
-        }
-        _ => return None,
-    })
-}
-
+/// Hit-test order: small keys before the large areas around them.
 const HIT_ORDER: [u8; 23] = [
-    18, 19, 20, 21, 22, 23, 12, 13, 4, 5, 7, 8, 6, 9, 27, 0, 1, 2, 3, 14, 15, 10, 11,
+    18, 19, 20, 21, 22, 23, 4, 5, 7, 8, 6, 9, 27, 0, 1, 2, 3, 14, 15, 10, 11, 12, 13,
 ];
-
-fn label(id: u8) -> &'static str {
-    match id {
-        0 => "▲",
-        1 => "▶",
-        2 => "▼",
-        3 => "◀",
-        4 => "A",
-        5 => "B",
-        7 => "X",
-        8 => "Y",
-        10 => "LB",
-        11 => "RB",
-        12 => "LT",
-        13 => "RT",
-        14 => "L3",
-        15 => "R3",
-        18 => "M1",
-        19 => "M2",
-        20 => "M3",
-        21 => "M4",
-        22 => "LM",
-        23 => "RM",
-        _ => "",
-    }
-}
 
 #[derive(Default)]
 pub struct Opts<'a> {
@@ -184,59 +103,180 @@ pub struct PadResponse {
     pub hovered: Option<u8>,
 }
 
-struct Xf {
-    o: Pos2,
-    s: f32,
+// --- the drawing -------------------------------------------------------------
+
+/// A key area: polygons in drawing coordinates with their triangulation.
+struct Area {
+    contours: Vec<Vec<[f32; 2]>>,
+    tris: Vec<Vec<u32>>,
+    min: [f32; 2],
+    max: [f32; 2],
 }
 
-impl Xf {
-    fn p(&self, x: f32, y: f32) -> Pos2 {
-        pos2(self.o.x + (x - X0) * self.s, self.o.y + y * self.s)
+impl Area {
+    fn contains(&self, (x, y): (f32, f32)) -> bool {
+        self.contours.iter().any(|c| inside_poly(c, (x, y)))
     }
-    fn q(&self, q: [f32; 2]) -> Pos2 {
-        self.p(q[0], q[1])
-    }
-    fn v(&self, v: f32) -> f32 {
-        v * self.s
-    }
-    fn rect(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
-        Rect::from_min_max(self.p(x0, y0), self.p(x1, y1))
-    }
-    fn inv(&self, p: Pos2) -> (f32, f32) {
-        ((p.x - self.o.x) / self.s + X0, (p.y - self.o.y) / self.s)
-    }
-}
 
-fn flatten(start: [f32; 2], segs: &[[f32; 6]], out: &mut Vec<[f32; 2]>) {
-    let mut a = start;
-    for seg in segs {
-        let (c1, c2, b) = ([seg[0], seg[1]], [seg[2], seg[3]], [seg[4], seg[5]]);
-        for i in 0..20 {
-            let t = i as f32 / 20.0;
-            let u = 1.0 - t;
-            let k = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
-            out.push([
-                k[0] * a[0] + k[1] * c1[0] + k[2] * c2[0] + k[3] * b[0],
-                k[0] * a[1] + k[1] * c1[1] + k[2] * c2[1] + k[3] * b[1],
-            ]);
-        }
-        a = b;
+    /// Where a key's mark dot goes: near the top-right of its area.
+    fn corner(&self) -> [f32; 2] {
+        let (w, h) = (self.max[0] - self.min[0], self.max[1] - self.min[1]);
+        [self.max[0] - w * 0.15, self.min[1] + h * 0.15]
     }
 }
 
-fn outline() -> &'static (Vec<[f32; 2]>, Vec<u32>) {
-    static CACHE: OnceLock<(Vec<[f32; 2]>, Vec<u32>)> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let mut left = vec![];
-        flatten(START, &LEFT_HALF, &mut left);
-        // Left half ends just before the bottom centre; the right half is the
-        // same curve mirrored and walked back up to the top.
-        let mut pts = left.clone();
-        pts.push([MID, 372.0]);
-        pts.extend(left.iter().skip(1).rev().map(|q| mirror(*q)));
-        let tris = triangulate(&pts);
-        (pts, tris)
+struct Art {
+    /// The drawing without the stick caps.
+    base: usvg::Tree,
+    /// The full drawing, for rendering the caps on their own.
+    full: usvg::Tree,
+    areas: Vec<(u8, Area)>,
+}
+
+fn art() -> &'static Art {
+    static ART: OnceLock<Art> = OnceLock::new();
+    ART.get_or_init(|| {
+        let opt = usvg::Options::default();
+        let full = usvg::Tree::from_str(SVG, &opt).expect("assets/apex5.svg parses");
+        let base = usvg::Tree::from_str(&without_groups(SVG, &["ls-cap", "rs-cap"]), &opt)
+            .expect("assets/apex5.svg parses");
+        let areas = FRONT_KEYS
+            .iter()
+            .map(|&(key, id)| {
+                let node = full
+                    .node_by_id(id)
+                    .unwrap_or_else(|| panic!("assets/apex5.svg has no #{id}"));
+                (key, area(node))
+            })
+            .collect();
+        Art { base, full, areas }
     })
+}
+
+/// The SVG source with the `<g id=…>…</g>` groups removed. The groups are
+/// flat (no nested groups), as tools/svg writes them.
+fn without_groups(svg: &str, ids: &[&str]) -> String {
+    let mut s = svg.to_owned();
+    for id in ids {
+        let start = s
+            .find(&format!("<g id=\"{id}\""))
+            .unwrap_or_else(|| panic!("assets/apex5.svg has no group #{id}"));
+        let end = start + s[start..].find("</g>").expect("group is closed") + "</g>".len();
+        s.replace_range(start..end, "");
+    }
+    s
+}
+
+fn area(node: &usvg::Node) -> Area {
+    let mut contours = vec![];
+    collect_contours(node, &mut contours);
+    for c in &mut contours {
+        tidy(c);
+    }
+    let tris = contours.iter().map(|c| triangulate(c)).collect();
+    let pts = contours.iter().flatten();
+    let min = pts
+        .clone()
+        .fold([f32::MAX; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+    let max = pts.fold([f32::MIN; 2], |m, p| [m[0].max(p[0]), m[1].max(p[1])]);
+    Area {
+        contours,
+        tris,
+        min,
+        max,
+    }
+}
+
+/// Flattened outlines of every path under `node`, in drawing coordinates.
+fn collect_contours(node: &usvg::Node, out: &mut Vec<Vec<[f32; 2]>>) {
+    use usvg::tiny_skia_path::PathSegment;
+    match node {
+        usvg::Node::Group(g) => {
+            for child in g.children() {
+                collect_contours(child, out);
+            }
+        }
+        usvg::Node::Path(path) => {
+            let ts = path.abs_transform();
+            let mut cur = vec![];
+            let mut last = tiny_skia::Point::zero();
+            let push = |p: tiny_skia::Point, cur: &mut Vec<[f32; 2]>| {
+                let mut q = p;
+                ts.map_point(&mut q);
+                // Tree coordinates start at the viewBox origin.
+                cur.push([q.x + VIEW[0], q.y + VIEW[1]]);
+            };
+            for seg in path.data().segments() {
+                match seg {
+                    PathSegment::MoveTo(p) => {
+                        if cur.len() > 2 {
+                            out.push(std::mem::take(&mut cur));
+                        }
+                        cur.clear();
+                        push(p, &mut cur);
+                        last = p;
+                    }
+                    PathSegment::LineTo(p) => {
+                        push(p, &mut cur);
+                        last = p;
+                    }
+                    PathSegment::QuadTo(c, p) => {
+                        for i in 1..=8 {
+                            let t = i as f32 / 8.0;
+                            let u = 1.0 - t;
+                            let q = tiny_skia::Point::from_xy(
+                                u * u * last.x + 2.0 * u * t * c.x + t * t * p.x,
+                                u * u * last.y + 2.0 * u * t * c.y + t * t * p.y,
+                            );
+                            push(q, &mut cur);
+                        }
+                        last = p;
+                    }
+                    PathSegment::CubicTo(c1, c2, p) => {
+                        for i in 1..=12 {
+                            let t = i as f32 / 12.0;
+                            let u = 1.0 - t;
+                            let k = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+                            let q = tiny_skia::Point::from_xy(
+                                k[0] * last.x + k[1] * c1.x + k[2] * c2.x + k[3] * p.x,
+                                k[0] * last.y + k[1] * c1.y + k[2] * c2.y + k[3] * p.y,
+                            );
+                            push(q, &mut cur);
+                        }
+                        last = p;
+                    }
+                    PathSegment::Close => {}
+                }
+            }
+            if cur.len() > 2 {
+                out.push(cur);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Drops repeated points (including a closing copy of the first) and points
+/// on a straight run, which ear clipping cannot remove.
+fn tidy(c: &mut Vec<[f32; 2]>) {
+    c.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3);
+    while c.len() > 3 && {
+        let (a, b) = (c[0], c[c.len() - 1]);
+        (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3
+    } {
+        c.pop();
+    }
+    let mut i = 0;
+    while c.len() > 3 && i < c.len() {
+        let n = c.len();
+        let (a, b, d) = (c[(i + n - 1) % n], c[i], c[(i + 1) % n]);
+        let cross = (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]);
+        if cross.abs() < 1e-4 {
+            c.remove(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// Ear clipping for a simple polygon.
@@ -289,153 +329,195 @@ fn triangulate(p: &[[f32; 2]]) -> Vec<u32> {
     out
 }
 
-fn gradient(top: Color32, bottom: Color32, y: f32, y0: f32, y1: f32) -> Color32 {
-    lerp_colour(top, bottom, ((y - y0) / (y1 - y0)).clamp(0.0, 1.0))
-}
-
-/// Convex polygon with a vertical gradient fill and an outline.
-fn gradient_poly(p: &egui::Painter, pts: &[Pos2], top: Color32, bottom: Color32, stroke: Stroke) {
-    let (y0, y1) = pts
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(a, b), q| (a.min(q.y), b.max(q.y)));
-    let mut mesh = Mesh::default();
-    for q in pts {
-        mesh.colored_vertex(*q, gradient(top, bottom, q.y, y0, y1));
-    }
-    for i in 1..pts.len() as u32 - 1 {
-        mesh.add_triangle(0, i, i + 1);
-    }
-    p.add(Shape::mesh(mesh));
-    p.add(Shape::closed_line(pts.to_vec(), stroke));
-}
-
-fn capsule_points(xf: &Xf, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> Vec<Pos2> {
-    let a = (y1 - y0).atan2(x1 - x0);
-    let mut pts = vec![];
-    for (cx, cy, from) in [
-        (x1, y1, a - std::f32::consts::FRAC_PI_2),
-        (x0, y0, a + std::f32::consts::FRAC_PI_2),
-    ] {
-        for i in 0..=10 {
-            let t = from + i as f32 / 10.0 * std::f32::consts::PI;
-            pts.push(xf.p(cx + r * t.cos(), cy + r * t.sin()));
+fn inside_poly(pts: &[[f32; 2]], (x, y): (f32, f32)) -> bool {
+    let mut c = false;
+    let n = pts.len();
+    for i in 0..n {
+        let (a, b) = (pts[i], pts[(i + n - 1) % n]);
+        if (a[1] > y) != (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0] {
+            c = !c;
         }
     }
-    pts
+    c
 }
 
-fn bumper_points(xf: &Xf, right: bool) -> Vec<Pos2> {
-    let pts: Vec<Pos2> = LB
-        .iter()
-        .map(|q| if right { xf.q(mirror(*q)) } else { xf.q(*q) })
-        .collect();
-    if right {
-        pts.into_iter().rev().collect()
+// --- rasters -------------------------------------------------------------------
+
+/// The drawing rendered for one on-screen size.
+#[derive(Clone)]
+struct Raster {
+    px: [usize; 2],
+    base: TextureHandle,
+    /// Stick caps with their rest rectangles in drawing coordinates.
+    caps: [(TextureHandle, [f32; 4]); 2],
+}
+
+fn render(tree: &usvg::Tree, px: [usize; 2], ts: tiny_skia::Transform) -> ColorImage {
+    let mut pixmap = tiny_skia::Pixmap::new(px[0] as u32, px[1] as u32).expect("non-empty size");
+    resvg::render(tree, ts, &mut pixmap.as_mut());
+    ColorImage::from_rgba_premultiplied(px, pixmap.data())
+}
+
+fn render_node(node: &usvg::Node, px: [usize; 2], scale: f32) -> ColorImage {
+    let mut pixmap = tiny_skia::Pixmap::new(px[0] as u32, px[1] as u32).expect("non-empty size");
+    // render_node skips the ancestors' transforms, including the viewBox
+    // shift that the node's bounding box already has.
+    let ts = tiny_skia::Transform::from_scale(scale, scale).pre_translate(-VIEW[0], -VIEW[1]);
+    resvg::render_node(node, ts, &mut pixmap.as_mut());
+    ColorImage::from_rgba_premultiplied(px, pixmap.data())
+}
+
+/// Rasters for the given pixel size, cached across frames. A few sizes are
+/// kept, since several screens show the pad at different sizes.
+fn raster(ctx: &egui::Context, px: [usize; 2]) -> Raster {
+    let id = Id::new("apex5-pad-rasters");
+    if let Some(r) = ctx.data(|d| {
+        d.get_temp::<Vec<Raster>>(id)
+            .and_then(|v| v.iter().find(|r| r.px == px).cloned())
+    }) {
+        return r;
+    }
+    let a = art();
+    let scale = px[0] as f32 / VIEW[2];
+    let base = ctx.load_texture(
+        "apex5-pad",
+        render(
+            &a.base,
+            px,
+            tiny_skia::Transform::from_scale(scale, px[1] as f32 / VIEW[3]),
+        ),
+        TextureOptions::LINEAR,
+    );
+    let caps = CAPS.map(|(_, id)| {
+        let node = a.full.node_by_id(id).expect("cap group exists");
+        let bb = node.abs_layer_bounding_box().expect("cap has a size");
+        let size = [
+            (bb.width() * scale).ceil() as usize + 1,
+            (bb.height() * scale).ceil() as usize + 1,
+        ];
+        let tex = ctx.load_texture(id, render_node(node, size, scale), TextureOptions::LINEAR);
+        let x = bb.x() + VIEW[0];
+        let y = bb.y() + VIEW[1];
+        let rect = [x, y, x + size[0] as f32 / scale, y + size[1] as f32 / scale];
+        (tex, rect)
+    });
+    let r = Raster { px, base, caps };
+    ctx.data_mut(|d| {
+        let v = d.get_temp_mut_or_default::<Vec<Raster>>(id);
+        v.insert(0, r.clone());
+        v.truncate(4);
+    });
+    r
+}
+
+// --- painting --------------------------------------------------------------------
+
+struct Xf {
+    o: Pos2,
+    s: f32,
+}
+
+impl Xf {
+    fn p(&self, x: f32, y: f32) -> Pos2 {
+        pos2(
+            self.o.x + (x - VIEW[0]) * self.s,
+            self.o.y + (y - VIEW[1]) * self.s,
+        )
+    }
+    fn q(&self, q: [f32; 2]) -> Pos2 {
+        self.p(q[0], q[1])
+    }
+    fn v(&self, v: f32) -> f32 {
+        v * self.s
+    }
+    fn rect(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
+        Rect::from_min_max(self.p(x0, y0), self.p(x1, y1))
+    }
+    fn inv(&self, p: Pos2) -> (f32, f32) {
+        (
+            (p.x - self.o.x) / self.s + VIEW[0],
+            (p.y - self.o.y) / self.s + VIEW[1],
+        )
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct KeyState {
+    hovered: bool,
+    selected: bool,
+    pressed: bool,
+    marked: bool,
+}
+
+impl KeyState {
+    fn lit(&self) -> bool {
+        self.hovered || self.selected || self.pressed
+    }
+}
+
+/// Highlight over a key of the drawing: the drawing already shows the key
+/// itself, so idle keys get nothing.
+fn overlay(p: &egui::Painter, xf: &Xf, a: &Area, st: KeyState, level: f32, shift: Vec2) {
+    let acc = accent();
+    let fill = if st.pressed {
+        acc.gamma_multiply(0.7)
+    } else if st.selected {
+        acc.gamma_multiply(0.35)
+    } else if st.hovered {
+        Color32::from_white_alpha(14)
     } else {
-        pts
+        Color32::TRANSPARENT
+    };
+    let stroke = if st.pressed || st.selected {
+        Stroke::new(2.0, acc)
+    } else if st.hovered {
+        Stroke::new(1.5, acc.gamma_multiply(0.7))
+    } else if level > 0.01 {
+        Stroke::new(1.0, acc.gamma_multiply(level))
+    } else {
+        Stroke::NONE
+    };
+    // Analogue triggers glow with their travel.
+    let fill = if level > 0.01 && !st.pressed {
+        acc.gamma_multiply(0.15 + 0.6 * level)
+    } else {
+        fill
+    };
+    for (c, tris) in a.contours.iter().zip(&a.tris) {
+        let pts: Vec<Pos2> = c.iter().map(|q| xf.q(*q) + shift).collect();
+        if fill != Color32::TRANSPARENT {
+            let mut mesh = Mesh::default();
+            for q in &pts {
+                mesh.colored_vertex(*q, fill);
+            }
+            mesh.indices = tris.clone();
+            p.add(Shape::mesh(mesh));
+        }
+        if stroke != Stroke::NONE {
+            p.add(Shape::closed_line(pts, stroke));
+        }
     }
 }
 
-fn draw_body(p: &egui::Painter, xf: &Xf) {
-    let (pts, tris) = outline();
-    let top = Color32::from_rgb(47, 53, 63);
-    let bottom = Color32::from_rgb(18, 20, 25);
-    let shadow: Vec<Pos2> = pts.iter().map(|q| xf.p(q[0], q[1] + 7.0)).collect();
-    p.add(Shape::closed_line(
-        shadow,
-        Stroke::new(xf.v(10.0), Color32::from_black_alpha(50)),
-    ));
-    let mut mesh = Mesh::default();
-    for q in pts {
-        mesh.colored_vertex(xf.q(*q), gradient(top, bottom, q[1], 60.0, 470.0));
-    }
-    mesh.indices = tris.clone();
-    p.add(Shape::mesh(mesh));
-    let line: Vec<Pos2> = pts.iter().map(|q| xf.q(*q)).collect();
-    p.add(Shape::closed_line(
-        line,
-        Stroke::new(1.5, Color32::from_rgb(74, 82, 96)),
-    ));
-    // Highlight along the top edge.
-    let hi: Vec<Pos2> = pts
-        .iter()
-        .filter(|q| q[1] < 100.0 && q[0] > 262.0 && q[0] < 722.0)
-        .map(|q| xf.p(q[0], q[1] + 4.0))
-        .collect();
-    if hi.len() > 2 {
-        p.add(Shape::line(
-            hi,
-            Stroke::new(1.0, Color32::from_white_alpha(20)),
-        ));
-    }
-
-    // Grip details: the slider on the left and the wheel on the right.
-    let groove = Stroke::new(1.0, Color32::from_rgb(58, 65, 77));
-    let slider = [
-        [216.0, 254.0],
-        [313.0, 296.0],
-        [294.0, 320.0],
-        [205.0, 293.0],
-    ];
-    p.add(Shape::convex_polygon(
-        slider.iter().map(|q| xf.q(*q)).collect(),
-        Color32::from_rgb(24, 27, 33),
-        groove,
-    ));
-    let wheel = capsule_points(xf, 760.0, 250.0, 779.0, 306.0, 10.0);
-    p.add(Shape::convex_polygon(
-        wheel,
-        Color32::from_rgb(24, 27, 33),
-        groove,
-    ));
-    // Stick-tension dials next to the sticks.
-    for c in [[405.0, 174.0], [650.0, 270.0]] {
-        p.circle_stroke(xf.q(c), xf.v(8.0), groove);
-        p.circle_filled(xf.q(c), xf.v(2.0), Color32::from_rgb(70, 78, 92));
-    }
+fn mark(p: &egui::Painter, xf: &Xf, at: Pos2) {
+    p.circle_filled(at, xf.v(5.5).max(3.0), accent());
+    p.circle_stroke(at, xf.v(5.5).max(3.0), Stroke::new(1.5, theme::BG));
 }
 
-fn draw_plate(p: &egui::Painter, xf: &Xf) {
-    let pts: Vec<Pos2> = PLATE.iter().map(|q| xf.q(*q)).collect();
-    gradient_poly(
-        p,
-        &pts,
-        Color32::from_rgb(206, 212, 221),
-        Color32::from_rgb(118, 125, 138),
-        Stroke::new(1.0, Color32::from_white_alpha(80)),
-    );
-    // Inner bevel.
-    let inner: Vec<Pos2> = PLATE
-        .iter()
-        .map(|q| {
-            let c = [MID, 120.0];
-            xf.p(c[0] + (q[0] - c[0]) * 0.93, c[1] + (q[1] - c[1]) * 0.9)
-        })
-        .collect();
-    p.add(Shape::closed_line(
-        inner,
-        Stroke::new(1.0, Color32::from_black_alpha(45)),
-    ));
-}
-
-fn draw_screen(p: &egui::Painter, xf: &Xf, text: Option<&str>) {
+fn draw_screen(p: &egui::Painter, xf: &Xf, text: &str) {
     let r = xf.rect(SCREEN[0], SCREEN[1], SCREEN[2], SCREEN[3]);
-    p.rect(
+    p.rect_filled(
         r,
-        CornerRadius::same(xf.v(5.0) as u8),
+        CornerRadius::same(xf.v(2.0) as u8),
         Color32::from_rgb(6, 8, 11),
-        Stroke::new(1.0, Color32::from_rgb(46, 50, 58)),
-        StrokeKind::Outside,
     );
-    if let Some(t) = text {
-        p.text(
-            r.center(),
-            egui::Align2::CENTER_CENTER,
-            t,
-            theme::bold(xf.v(17.0).max(8.0)),
-            accent(),
-        );
-    }
+    p.text(
+        r.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        theme::bold(xf.v(17.0).max(8.0)),
+        accent(),
+    );
 }
 
 fn draw_leds(p: &egui::Painter, xf: &Xf, leds: Option<&[[u8; 3]]>, brightness: f32) {
@@ -453,6 +535,8 @@ fn draw_leds(p: &egui::Painter, xf: &Xf, leds: Option<&[[u8; 3]]>, brightness: f
         }
     };
     let lit = |c: Color32| c.r().max(c.g()).max(c.b()) > 40;
+    // Unlit, the strips are drawn like the rest of the line art.
+    let idle = Color32::from_rgb(157, 183, 220);
     for strip in [0..6usize, 6..12] {
         for i in strip.clone() {
             if i + 1 < strip.end {
@@ -460,11 +544,10 @@ fn draw_leds(p: &egui::Painter, xf: &Xf, leds: Option<&[[u8; 3]]>, brightness: f
                 let seg = [xf.q(LEDS[i]), xf.q(LEDS[i + 1])];
                 if lit(c) {
                     p.line_segment(seg, Stroke::new(xf.v(22.0), c.gamma_multiply(0.09)));
+                    p.line_segment(seg, Stroke::new(xf.v(5.0), c.gamma_multiply(0.75)));
+                } else {
+                    p.line_segment(seg, Stroke::new(xf.v(0.9), idle.gamma_multiply(0.3)));
                 }
-                p.line_segment(
-                    seg,
-                    Stroke::new(xf.v(5.0), if lit(c) { c.gamma_multiply(0.75) } else { c }),
-                );
             }
         }
     }
@@ -475,291 +558,109 @@ fn draw_leds(p: &egui::Painter, xf: &Xf, leds: Option<&[[u8; 3]]>, brightness: f
             p.circle_filled(at, xf.v(14.0), c.gamma_multiply(0.13));
             p.circle_filled(at, xf.v(5.0), lerp_colour(c, Color32::WHITE, 0.35));
         } else {
-            p.circle_filled(at, xf.v(3.5), Color32::from_rgb(46, 51, 60));
+            p.circle_filled(at, xf.v(2.2), idle.gamma_multiply(0.45));
         }
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct KeyState {
-    hovered: bool,
-    selected: bool,
-    pressed: bool,
-    marked: bool,
+fn back_key_rect(id: u8) -> [f32; 4] {
+    let x = 247.0 + (id - 18) as f32 * 84.0;
+    [x, 500.0, x + 70.0, 528.0]
 }
 
-struct Look {
-    fill: Color32,
-    stroke: Stroke,
-    text: Color32,
-}
-
-fn look(st: KeyState, base: Color32, idle_text: Color32) -> Look {
+fn draw_back_key(p: &egui::Painter, xf: &Xf, id: u8, label: &str, st: KeyState) {
+    let [x0, y0, x1, y1] = back_key_rect(id);
+    let rect = xf.rect(x0, y0, x1, y1);
     let a = accent();
-    Look {
-        fill: if st.pressed {
-            a
-        } else if st.selected {
-            lerp_colour(base, a, 0.28)
-        } else if st.hovered {
-            lerp_colour(base, Color32::WHITE, 0.08)
-        } else {
-            base
-        },
-        stroke: if st.selected || st.pressed {
-            Stroke::new(2.0, a)
-        } else if st.hovered {
-            Stroke::new(1.5, a.gamma_multiply(0.7))
-        } else {
-            Stroke::new(1.0, Color32::from_rgb(70, 78, 92))
-        },
-        text: if st.pressed {
-            on_accent()
-        } else if st.selected || st.hovered {
-            Color32::WHITE
-        } else {
-            idle_text
-        },
-    }
-}
-
-fn mark(p: &egui::Painter, xf: &Xf, at: Pos2) {
-    p.circle_filled(at, xf.v(5.5).max(3.0), accent());
-    p.circle_stroke(at, xf.v(5.5).max(3.0), Stroke::new(1.5, theme::BG));
-}
-
-fn draw_key(p: &egui::Painter, xf: &Xf, id: u8, st: KeyState, trigger: Option<f32>) {
-    let Some(g) = geom(id) else { return };
     let base = Color32::from_rgb(29, 33, 40);
-    let lk = look(st, base, theme::DIM);
-    let (centre, corner) = match g {
-        Geom::Circle(x, y, r) => {
-            let c = xf.p(x, y);
-            p.circle(c, xf.v(r), lk.fill, lk.stroke);
-            (c, xf.p(x + r * 0.72, y - r * 0.72))
-        }
-        Geom::Rect(x0, y0, x1, y1, r) => {
-            let rect = xf.rect(x0, y0, x1, y1);
-            p.rect(
-                rect,
-                CornerRadius::same(xf.v(r) as u8),
-                lk.fill,
-                lk.stroke,
-                StrokeKind::Inside,
-            );
-            if let Some(v) = trigger.filter(|v| *v > 0.01) {
-                let h = rect.height() * v;
-                let f =
-                    Rect::from_min_max(pos2(rect.left(), rect.bottom() - h), rect.right_bottom());
-                p.rect_filled(
-                    f.shrink(1.5),
-                    CornerRadius::same(xf.v(r - 2.0).max(0.0) as u8),
-                    accent().gamma_multiply(0.85),
-                );
-            }
-            (rect.center(), xf.p(x1 - 3.0, y0 + 3.0))
-        }
-        Geom::Capsule(x0, y0, x1, y1, r) => {
-            let pts = capsule_points(xf, x0, y0, x1, y1, r);
-            let fill = if st.pressed || st.selected || st.hovered {
-                lk.fill
-            } else {
-                Color32::from_rgb(150, 157, 170)
-            };
-            p.add(Shape::convex_polygon(pts, fill, lk.stroke));
-            let c = xf.p((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-            (c, xf.p(x1.max(x0) + 4.0, y0.min(y1)))
-        }
-        Geom::Bumper(right) => {
-            let pts = bumper_points(xf, right);
-            p.add(Shape::convex_polygon(pts, lk.fill, lk.stroke));
-            let x = if right { 2.0 * MID - 352.0 } else { 352.0 };
-            (
-                xf.p(x, 56.0),
-                xf.p(if right { 2.0 * MID - 404.0 } else { 404.0 }, 50.0),
-            )
-        }
+    let fill = if st.pressed {
+        a
+    } else if st.selected {
+        lerp_colour(base, a, 0.28)
+    } else if st.hovered {
+        lerp_colour(base, Color32::WHITE, 0.08)
+    } else {
+        base
     };
-    match id {
-        // Home is the Flydigi mark on the plate: draw a winged V.
-        27 => {
-            let c = centre;
-            let col = if st.pressed {
-                on_accent()
-            } else if st.selected || st.hovered {
-                accent()
-            } else {
-                Color32::from_rgb(40, 45, 54)
-            };
-            let s = xf.v(1.0);
-            let wing = |sx: f32| {
-                vec![
-                    c + vec2(sx * 2.0, 13.0) * s,
-                    c + vec2(sx * 15.0, -12.0) * s,
-                    c + vec2(sx * 6.0, -6.0) * s,
-                    c + vec2(sx * 1.0, 4.0) * s,
-                ]
-            };
-            p.add(Shape::convex_polygon(wing(-1.0), col, Stroke::NONE));
-            p.add(Shape::convex_polygon(wing(1.0), col, Stroke::NONE));
-        }
-        6 => {
-            for d in [vec2(-1.5, -1.5), vec2(1.5, 1.5)] {
-                let r = Rect::from_center_size(centre + d * xf.v(1.0), vec2(xf.v(6.0), xf.v(6.0)));
-                p.rect_stroke(
-                    r,
-                    1.0,
-                    Stroke::new(1.0, Color32::from_rgb(40, 45, 54)),
-                    StrokeKind::Middle,
-                );
-            }
-        }
-        9 => {
-            for dy in [-3.0f32, 0.0, 3.0] {
-                let y = centre.y + xf.v(dy);
-                p.line_segment(
-                    [pos2(centre.x - xf.v(5.0), y), pos2(centre.x + xf.v(5.0), y)],
-                    Stroke::new(1.0, Color32::from_rgb(40, 45, 54)),
-                );
-            }
-        }
-        _ => {
-            let t = label(id);
-            let size = match id {
-                0..=3 => 11.0,
-                4 | 5 | 7 | 8 => 19.0,
-                _ => 15.0,
-            };
-            if !t.is_empty() {
-                p.text(
-                    centre,
-                    egui::Align2::CENTER_CENTER,
-                    t,
-                    theme::bold(xf.v(size).max(8.0)),
-                    lk.text,
-                );
-            }
-        }
-    }
+    let stroke = if st.selected || st.pressed {
+        Stroke::new(2.0, a)
+    } else if st.hovered {
+        Stroke::new(1.5, a.gamma_multiply(0.7))
+    } else {
+        Stroke::new(1.0, Color32::from_rgb(70, 78, 92))
+    };
+    let text = if st.pressed {
+        on_accent()
+    } else if st.lit() {
+        Color32::WHITE
+    } else {
+        theme::DIM
+    };
+    p.rect(
+        rect,
+        CornerRadius::same(xf.v(14.0) as u8),
+        fill,
+        stroke,
+        StrokeKind::Inside,
+    );
+    p.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        theme::bold(xf.v(15.0).max(8.0)),
+        text,
+    );
     if st.marked && !st.pressed {
-        mark(p, xf, corner);
+        mark(p, xf, xf.p(x1 - 3.0, y0 + 3.0));
     }
 }
 
-fn draw_dpad(p: &egui::Painter, xf: &Xf, state: &dyn Fn(u8) -> KeyState) {
-    let [cx, cy] = DPAD;
-    // Rounded diamond base.
-    let mut base = vec![];
-    for i in 0..4 {
-        let a = i as f32 * std::f32::consts::FRAC_PI_2;
-        for k in 0..=6 {
-            let t = a - 0.35 + k as f32 / 6.0 * 0.7;
-            let r = 60.0 - (1.0 - ((t - a) / 0.35).powi(2)).max(0.0) * 6.0;
-            base.push(xf.p(cx + r * t.cos(), cy + r * t.sin()));
-        }
+fn hit(id: u8, q: (f32, f32), shift: (f32, f32)) -> bool {
+    if (18..=23).contains(&id) {
+        let [x0, y0, x1, y1] = back_key_rect(id);
+        return q.0 >= x0 - 2.0 && q.0 <= x1 + 2.0 && q.1 >= y0 - 2.0 && q.1 <= y1 + 2.0;
     }
-    p.add(Shape::convex_polygon(
-        base,
-        Color32::from_rgb(14, 16, 20),
-        Stroke::new(1.0, Color32::from_rgb(60, 67, 79)),
-    ));
-    p.rect_filled(
-        xf.rect(cx - 10.0, cy - 10.0, cx + 10.0, cy + 10.0),
-        0.0,
-        Color32::from_rgb(29, 33, 40),
-    );
-    for id in 0..4u8 {
-        draw_key(p, xf, id, state(id), None);
-    }
-}
-
-fn draw_stick(p: &egui::Painter, xf: &Xf, id: u8, centre: [f32; 2], st: KeyState, pos: (f32, f32)) {
-    let c = xf.q(centre);
-    p.circle(
-        c,
-        xf.v(48.0),
-        Color32::from_rgb(12, 14, 18),
-        Stroke::new(1.0, Color32::from_rgb(60, 67, 79)),
-    );
-    let cap = c + vec2(pos.0, -pos.1) * xf.v(13.0);
-    let lk = look(st, Color32::from_rgb(29, 33, 40), Color32::WHITE);
-    p.circle(cap, xf.v(34.0), lk.fill, lk.stroke);
-    p.circle(
-        cap,
-        xf.v(24.0),
-        Color32::from_rgb(21, 24, 29),
-        Stroke::new(1.0, Color32::from_rgb(52, 58, 69)),
-    );
-    // Knurled rim.
-    for i in 0..24 {
-        let a = i as f32 / 24.0 * std::f32::consts::TAU;
-        let d = vec2(a.cos(), a.sin());
-        p.line_segment(
-            [cap + d * xf.v(27.0), cap + d * xf.v(31.0)],
-            Stroke::new(1.0, Color32::from_rgb(46, 52, 62)),
-        );
-    }
-    if st.selected || st.hovered || st.pressed {
-        p.text(
-            cap,
-            egui::Align2::CENTER_CENTER,
-            label(id),
-            theme::bold(xf.v(15.0).max(8.0)),
-            lk.text,
-        );
-    }
-    if st.marked {
-        mark(p, xf, xf.p(centre[0] + 26.0, centre[1] - 26.0));
-    }
-}
-
-fn inside_poly(pts: &[[f32; 2]], (x, y): (f32, f32)) -> bool {
-    let mut c = false;
-    let n = pts.len();
-    for i in 0..n {
-        let (a, b) = (pts[i], pts[(i + n - 1) % n]);
-        if (a[1] > y) != (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0] {
-            c = !c;
-        }
-    }
-    c
-}
-
-fn hit(g: Geom, q: (f32, f32)) -> bool {
-    let (x, y) = q;
-    match g {
-        Geom::Circle(cx, cy, r) => (x - cx).powi(2) + (y - cy).powi(2) <= (r + 3.0).powi(2),
-        Geom::Rect(x0, y0, x1, y1, _) => {
-            x >= x0 - 2.0 && x <= x1 + 2.0 && y >= y0 - 2.0 && y <= y1 + 2.0
-        }
-        Geom::Capsule(x0, y0, x1, y1, r) => {
-            let (dx, dy) = (x1 - x0, y1 - y0);
-            let t = (((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-            let (px, py) = (x0 + t * dx, y0 + t * dy);
-            (x - px).powi(2) + (y - py).powi(2) <= (r + 4.0).powi(2)
-        }
-        Geom::Bumper(right) => {
-            let pts: Vec<[f32; 2]> = LB
-                .iter()
-                .map(|p| if right { mirror(*p) } else { *p })
-                .collect();
-            // Only the part that shows above the body.
-            inside_poly(&pts, q) && y < 72.0
-        }
-    }
+    art()
+        .areas
+        .iter()
+        .find(|(k, _)| *k == id)
+        .is_some_and(|(_, a)| a.contains((q.0 - shift.0, q.1 - shift.1)))
 }
 
 pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
-    let h = if o.show_back { H_BACK } else { H_FRONT };
+    let h = if o.show_back { H_BACK } else { VIEW[3] };
     let sense = if o.interactive {
         Sense::click()
     } else {
         Sense::hover()
     };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
-    let s = (rect.width() / W).min(rect.height() / h);
-    let origin = pos2(rect.center().x - W * s / 2.0, rect.center().y - h * s / 2.0);
-    let xf = Xf { o: origin, s };
+    let ppp = ui.ctx().pixels_per_point();
+    // Whole physical pixels for the drawing, so the raster maps 1:1.
+    let px_w = ((rect.width() / VIEW[2]).min(rect.height() / h) * VIEW[2] * ppp).floor();
+    let px = [
+        px_w.max(1.0) as usize,
+        (px_w * VIEW[3] / VIEW[2]).round().max(1.0) as usize,
+    ];
+    let s = px[0] as f32 / ppp / VIEW[2];
+    let origin = pos2(
+        rect.center().x - VIEW[2] * s / 2.0,
+        rect.center().y - h * s / 2.0,
+    );
+    let xf = Xf {
+        o: (origin.to_vec2() * ppp).round().to_pos2() / ppp,
+        s,
+    };
+
+    let [l, r] = o.sticks.unwrap_or([(0.0, 0.0); 2]);
+    let stick_shift = |id: u8| -> (f32, f32) {
+        let (x, y) = match id {
+            14 => l,
+            15 => r,
+            _ => return (0.0, 0.0),
+        };
+        (x * STICK_TRAVEL, -y * STICK_TRAVEL)
+    };
 
     let mut hovered = None;
     if o.interactive
@@ -770,7 +671,7 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
             .iter()
             .copied()
             .filter(|id| o.show_back || !(18..=23).contains(id))
-            .find(|id| geom(*id).is_some_and(|g| hit(g, q)));
+            .find(|id| hit(*id, q, stick_shift(*id)));
         if hovered.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -785,26 +686,75 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
         marked: o.marked.contains(&id),
     };
 
-    // Triggers and bumpers sit behind the body.
-    let (lt, rt) = o.triggers.unwrap_or((0.0, 0.0));
-    draw_key(&p, &xf, 12, state(12), Some(lt));
-    draw_key(&p, &xf, 13, state(13), Some(rt));
-    draw_key(&p, &xf, 10, state(10), None);
-    draw_key(&p, &xf, 11, state(11), None);
-    draw_body(&p, &xf);
+    let ras = raster(ui.ctx(), px);
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    p.image(
+        ras.base.id(),
+        xf.rect(VIEW[0], VIEW[1], VIEW[0] + VIEW[2], VIEW[1] + VIEW[3]),
+        uv,
+        Color32::WHITE,
+    );
     draw_leds(&p, &xf, o.leds, o.brightness);
-    draw_plate(&p, &xf);
-    draw_screen(&p, &xf, o.screen);
-    for id in [27u8, 6, 9] {
-        draw_key(&p, &xf, id, state(id), None);
+    if let Some(t) = o.screen {
+        draw_screen(&p, &xf, t);
     }
-    draw_dpad(&p, &xf, &state);
-    for id in [4u8, 5, 7, 8] {
-        draw_key(&p, &xf, id, state(id), None);
+
+    let (lt, rt) = o.triggers.unwrap_or((0.0, 0.0));
+    let a = art();
+    for (id, area) in &a.areas {
+        if matches!(id, 14 | 15) {
+            continue;
+        }
+        let level = match id {
+            12 => lt,
+            13 => rt,
+            _ => 0.0,
+        };
+        overlay(&p, &xf, area, state(*id), level, Vec2::ZERO);
     }
-    let [l, r] = o.sticks.unwrap_or([(0.0, 0.0); 2]);
-    draw_stick(&p, &xf, 14, LSTICK, state(14), l);
-    draw_stick(&p, &xf, 15, RSTICK, state(15), r);
+
+    // Stick caps follow the sticks; the drawing's line layer is 42% opaque.
+    for ((id, _), (tex, [x0, y0, x1, y1])) in CAPS.iter().zip(&ras.caps) {
+        let (dx, dy) = stick_shift(*id);
+        let shift = vec2(xf.v(dx), xf.v(dy));
+        let st = state(*id);
+        p.image(
+            tex.id(),
+            xf.rect(*x0, *y0, *x1, *y1).translate(shift),
+            uv,
+            Color32::from_white_alpha(107),
+        );
+        if let Some((_, area)) = a.areas.iter().find(|(k, _)| k == id) {
+            overlay(&p, &xf, area, st, 0.0, shift);
+            if st.lit() {
+                let c = xf.p(
+                    (area.min[0] + area.max[0]) / 2.0,
+                    (area.min[1] + area.max[1]) / 2.0,
+                ) + shift;
+                let text = if *id == 14 { "L3" } else { "R3" };
+                let colour = if st.pressed {
+                    on_accent()
+                } else {
+                    Color32::WHITE
+                };
+                p.text(
+                    c,
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    theme::bold(xf.v(15.0).max(8.0)),
+                    colour,
+                );
+            }
+        }
+    }
+
+    for (id, area) in &a.areas {
+        let st = state(*id);
+        if st.marked && !st.pressed {
+            let (dx, dy) = stick_shift(*id);
+            mark(&p, &xf, xf.q(area.corner()) + vec2(xf.v(dx), xf.v(dy)));
+        }
+    }
 
     if o.show_back {
         p.text(
@@ -814,10 +764,46 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
             FontId::new(xf.v(13.0).max(9.0), egui::FontFamily::Name("medium".into())),
             theme::FAINT,
         );
-        for (id, _) in BACK_KEYS {
-            draw_key(&p, &xf, id, state(id), None);
+        for (id, label) in BACK_KEYS {
+            draw_back_key(&p, &xf, id, label, state(id));
         }
     }
 
     PadResponse { clicked, hovered }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drawing_has_every_key() {
+        let a = art();
+        assert_eq!(a.areas.len(), FRONT_KEYS.len());
+        for (id, area) in &a.areas {
+            assert!(!area.contours.is_empty(), "key {id} has no outline");
+            for (c, t) in area.contours.iter().zip(&area.tris) {
+                assert_eq!(t.len(), (c.len() - 2) * 3, "key {id} did not triangulate");
+            }
+        }
+    }
+
+    #[test]
+    fn key_areas_sit_where_the_drawing_has_them() {
+        let a = art();
+        let centre = |id: u8| {
+            let (_, ar) = a.areas.iter().find(|(k, _)| *k == id).unwrap();
+            [(ar.min[0] + ar.max[0]) / 2.0, (ar.min[1] + ar.max[1]) / 2.0]
+        };
+        let near =
+            |p: [f32; 2], q: [f32; 2]| (p[0] - q[0]).abs() < 1.0 && (p[1] - q[1]).abs() < 1.0;
+        assert!(near(centre(4), [655.67, 217.0]), "A at {:?}", centre(4));
+        assert!(near(centre(14), [331.37, 171.8]), "LS at {:?}", centre(14));
+        assert!(hit(10, (360.0, 55.0), (0.0, 0.0)), "LB");
+        assert!(hit(0, (408.8, 245.0), (0.0, 0.0)), "D-pad up");
+        assert!(
+            !hit(0, (408.8, 274.0 + 20.0), (0.0, 0.0)),
+            "D-pad up vs down"
+        );
+    }
 }
