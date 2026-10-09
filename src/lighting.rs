@@ -17,16 +17,16 @@ const OFF_CYCLE: usize = 5;
 const OFF_BRIGHTNESS: usize = 6;
 const OFF_LED_COUNT: usize = 7;
 const OFF_MODE: usize = 8;
+const OFF_GRIP_SYNC: usize = 9; // "light effect on vibration": 1 = flare with rumble
 const OFF_FRAMES: usize = 20;
-// FLOW is 1 both in Space Station's `LedType` and in the ids older builds of
-// this app stored, so it is the one mode byte value that can be trusted.
-const LED_TYPE_FLOW: u8 = 1;
-// Byte 9 (grip sync, "lights react to vibration") is never written by this app.
+// Flow is 1 both in this app's ids and in Space Station's `LedType`.
+const MODE_FLOW: u8 = 1;
 
 pub type Rgb = [u8; 3];
 
-/// Where each of the 12 LEDs sits across the pad, left to right (0..1), so
-/// effects follow the pad rather than the slot order. Slots 1 and 0 light the
+/// Where each of the 12 LEDs sits across the pad, left to right (0..1), for
+/// drawing the pad. Effects run in slot order instead: spreading them by
+/// these places made them play unevenly on the pad. Slots 1 and 0 light the
 /// FLYDIGI plate on the left grip (left, right), slots 2..11 the strip along
 /// the bottom edge, left to right. Taken from the LED marks in
 /// assets/apex5.svg; src/ui/pad.rs checks that they still match.
@@ -41,17 +41,6 @@ pub fn left_to_right(leds: usize) -> Vec<usize> {
         order.sort_by(|&a, &b| LED_X[a].total_cmp(&LED_X[b]));
     }
     order
-}
-
-/// The LED's place for effects, spread over 0..(n-1)/n like evenly spaced
-/// slots, since colour lists wrap around at 1.
-fn position(slot: usize, leds: usize) -> f32 {
-    let along = if leds == LED_X.len() {
-        LED_X[slot] * (leds - 1) as f32
-    } else {
-        slot as f32
-    };
-    along / leds as f32
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -79,16 +68,21 @@ impl Effect {
         Effect::StaticMulti,
         Effect::Off,
     ];
-    /// Space Station's `LedType` for the mode byte (FLOW 1, BREATH 2,
-    /// GRADIENT 3, ON 5, Close 6), so its UI names the stored effect. Several
-    /// of our effects share GRADIENT; `LedConfig::effect` tells them apart.
-    fn led_type(self) -> u8 {
+    /// The mode byte. The firmware reads it while playing the frames (HW:
+    /// with Space Station's `LedType` codes, BREATH 2 and GRADIENT 3, Breath
+    /// and Rotation played with jerks), so these are the ids every effect was
+    /// seen to play smoothly with, even if Space Station names them wrongly.
+    fn mode(self) -> u8 {
         match self {
-            Effect::Flow => LED_TYPE_FLOW,
-            Effect::Breath => 2,
-            Effect::Solid | Effect::StaticMulti => 5,
-            Effect::Off => 6,
-            Effect::Rotation | Effect::Wave | Effect::Rainbow | Effect::Flash => 3,
+            Effect::Off => 0,
+            Effect::Flow => MODE_FLOW,
+            Effect::Rotation => 2,
+            Effect::Breath => 3,
+            Effect::Solid => 4,
+            Effect::StaticMulti => 5,
+            Effect::Rainbow => 6,
+            Effect::Wave => 7,
+            Effect::Flash => 8,
         }
     }
     pub fn uses_colours(self) -> bool {
@@ -99,13 +93,33 @@ impl Effect {
     }
 }
 
+/// Lighting is kept per profile slot (HW: slot 1 differed from 2-4).
 #[derive(Clone, PartialEq, Eq)]
 pub struct LedConfig {
+    pub slot: u8,
     pub blob: Vec<u8>,
 }
 
 fn blend(a: Rgb, b: Rgb, t: f32) -> Rgb {
     std::array::from_fn(|i| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * t) as u8)
+}
+
+/// Whether one colour is a dimmed copy of the other (`scale` truncates, so
+/// each channel may be off by one).
+fn same_hue(a: Rgb, b: Rgb) -> bool {
+    let (hi, lo) = if a.iter().max() >= b.iter().max() {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let top = *hi.iter().max().unwrap() as f32;
+    if top == 0.0 {
+        return true;
+    }
+    let k = *lo.iter().max().unwrap() as f32 / top;
+    hi.iter()
+        .zip(lo)
+        .all(|(&h, l)| (h as f32 * k - l as f32).abs() <= 1.5)
 }
 
 fn sample(cols: &[Rgb], p: f32) -> Rgb {
@@ -141,18 +155,24 @@ pub fn hue(p: f32) -> Rgb {
 }
 
 impl LedConfig {
-    pub fn read(dev: &mut Device) -> Result<Self> {
+    /// Reads the lighting of profile slot `slot`. NOTE: like reading a
+    /// profile (163), this makes that slot the running one (HW).
+    pub fn read(dev: &mut Device, slot: u8) -> Result<Self> {
         Ok(LedConfig {
-            blob: blob::read(dev, CMD_READ, 0, "lighting config")?,
+            slot,
+            blob: blob::read(dev, CMD_READ, slot, "lighting config")?,
         })
     }
 
+    /// Writes to this config's slot, only the packets that differ from `old`
+    /// when `old` is the same slot's lighting.
     pub fn write(&self, dev: &mut Device, old: Option<&LedConfig>) -> Result<usize> {
+        let old = old.filter(|o| o.slot == self.slot);
         blob::write(
             dev,
             CMD_WRITE_START,
             CMD_WRITE_PACK,
-            0,
+            self.slot,
             &self.blob,
             old.map(|o| &o.blob[..]),
         )
@@ -179,18 +199,23 @@ impl LedConfig {
     pub fn set_cycle(&mut self, v: u8) {
         self.blob[OFF_CYCLE] = v.max(1);
     }
+    /// Whether the LEDs flare while the grip motors run (byte 9).
+    pub fn grip_sync(&self) -> bool {
+        self.blob[OFF_GRIP_SYNC] == 1
+    }
     pub fn mode(&self) -> u8 {
         self.blob[OFF_MODE]
     }
-    /// Which of our effects made the stored frames. The mode byte holds only
-    /// the coarser `LedType` (older builds stored their own ids there), so the
-    /// frames decide and the byte only separates Flow from look-alikes.
+    /// Which of our effects made the stored frames. The frames decide, since
+    /// the mode byte may hold Space Station's `LedType` codes (its own
+    /// lighting, or a build of this app that wrote them); the byte only
+    /// separates Flow from look-alikes.
     pub fn effect(&self) -> Effect {
         let (leds, frames) = (self.leds(), self.frames());
         let frame = |f: usize| -> Vec<Rgb> { (0..leds).map(|l| self.led(f, l)).collect() };
         let dark = |f: usize| frame(f).iter().all(|c| *c == [0; 3]);
         let uniform = |f: usize| frame(f).windows(2).all(|w| w[0] == w[1]);
-        let flow = self.mode() == LED_TYPE_FLOW;
+        let flow = self.mode() == MODE_FLOW;
         if (0..frames).all(dark) {
             return Effect::Off;
         }
@@ -215,11 +240,43 @@ impl LedConfig {
                 Effect::Breath
             };
         }
-        if frame(0).iter().filter(|c| **c == [0; 3]).count() * 2 > leds {
+        // a wave darkens at most one LED at a time, a comet leaves a gap
+        if frame(0).iter().filter(|c| **c == [0; 3]).count() >= 2 {
             return Effect::Rotation;
         }
         if flow { Effect::Flow } else { Effect::Wave }
     }
+    /// The colours the frames were most likely made from, at most 5, in
+    /// order of first appearance. Dimmed copies of one colour (a fade, a
+    /// breath, a rotating tail) fold into its brightest shade, so they do not
+    /// come back as colours of their own.
+    pub fn colours(&self) -> Vec<Rgb> {
+        let sum = |c: Rgb| c.iter().map(|&v| v as u32).sum::<u32>();
+        let mut out: Vec<Rgb> = vec![];
+        for f in 0..self.frames() {
+            for l in 0..self.leds() {
+                let c = self.led(f, l);
+                if c == [0; 3] {
+                    continue;
+                }
+                match out.iter().position(|o| same_hue(*o, c)) {
+                    Some(i) if sum(c) > sum(out[i]) => out[i] = c,
+                    Some(_) => {}
+                    None if out.len() < 5 => out.push(c),
+                    None => {}
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether applying `effect` with `colours` gives exactly these frames.
+    pub fn made_by(&self, effect: Effect, colours: &[Rgb]) -> bool {
+        let mut again = self.clone();
+        again.apply(effect, colours);
+        again.blob[OFF_FRAMES..] == self.blob[OFF_FRAMES..]
+    }
+
     pub fn loop_range(&self) -> (usize, usize) {
         (
             self.blob[OFF_LOOP_START] as usize,
@@ -236,14 +293,14 @@ impl LedConfig {
         let (leds, frames) = (self.leds(), self.frames());
         for fr in 0..frames {
             for l in 0..leds {
-                let c = f(fr as f32 / frames as f32, position(l, leds));
+                let c = f(fr as f32 / frames as f32, l as f32 / leds as f32);
                 let o = OFF_FRAMES + (fr * leds + l) * 3;
                 self.blob[o..o + 3].copy_from_slice(&c);
             }
         }
         self.blob[OFF_LOOP_START] = 0;
         self.blob[OFF_LOOP_END] = (frames - 1) as u8;
-        self.blob[OFF_MODE] = effect.led_type();
+        self.blob[OFF_MODE] = effect.mode();
         self.blob[OFF_CLICK_FEEDBACK] = 0;
     }
 
@@ -281,12 +338,28 @@ impl LedConfig {
                 scale(cols[(f * n as f32) as usize % n], tri(f))
             }),
             Effect::Wave => self.fill(effect, |f, l| scale(sample(&cols, l), tri(l + f))),
-            Effect::Rotation => self.fill(effect, |f, l| {
-                let span = (leds / 3.0).max(1.0);
-                let behind = (f * leds - l * leds).rem_euclid(leds);
-                let c = cols[(f * 10.0) as usize % n];
-                scale(c, (1.0 - behind / span).max(0.0))
-            }),
+            Effect::Rotation => {
+                // With 10 frames for 12 LEDs the head moves 1.2 LEDs a frame,
+                // so a hard leading edge popped LEDs on. This comet rises over
+                // two frames' travel, holds for one and fades over four: every
+                // LED reaches full strength and the total light stays constant.
+                let step = leds / self.frames() as f32;
+                let (rise, hold, fade) = (2.0 * step, step, 4.0 * step);
+                self.fill(effect, |f, l| {
+                    let mut passed = (f * leds - l * leds).rem_euclid(leds);
+                    if passed > leds / 2.0 {
+                        passed -= leds; // the head has not reached it yet
+                    }
+                    let k = if passed < 0.0 {
+                        1.0 + passed / rise
+                    } else if passed <= hold {
+                        1.0
+                    } else {
+                        1.0 - (passed - hold) / fade
+                    };
+                    scale(sample(&cols, f), k.max(0.0))
+                })
+            }
             Effect::Flash => self.fill(effect, |f, _| {
                 let fr = (f * 10.0).round() as usize;
                 if fr.is_multiple_of(2) {
@@ -306,7 +379,7 @@ mod tests {
     fn blank() -> LedConfig {
         let mut blob = vec![0xFF; OFF_FRAMES + 10 * 12 * 3];
         blob[..10].copy_from_slice(&[0, 3, 0, 0, 9, 10, 100, 12, 1, 0]);
-        LedConfig { blob }
+        LedConfig { slot: 0, blob }
     }
 
     #[test]
@@ -331,15 +404,17 @@ mod tests {
     }
 
     #[test]
-    fn mode_byte_is_space_stations_led_type() {
+    fn mode_byte_keeps_the_ids_that_play_smoothly() {
         for (effect, ty) in [
+            (Effect::Off, 0),
             (Effect::Flow, 1),
-            (Effect::Breath, 2),
-            (Effect::Wave, 3),
-            (Effect::Rainbow, 3),
-            (Effect::Solid, 5),
+            (Effect::Rotation, 2),
+            (Effect::Breath, 3),
+            (Effect::Solid, 4),
             (Effect::StaticMulti, 5),
-            (Effect::Off, 6),
+            (Effect::Rainbow, 6),
+            (Effect::Wave, 7),
+            (Effect::Flash, 8),
         ] {
             let mut cfg = blank();
             cfg.apply(effect, &[[255, 0, 0], [0, 0, 255]]);
@@ -348,9 +423,51 @@ mod tests {
     }
 
     #[test]
+    fn faded_copies_are_not_colours_of_their_own() {
+        // Several colours blend or never show at full strength, so only a
+        // single colour comes back exactly; the app remembers the rest.
+        for effect in [
+            Effect::Rotation,
+            Effect::Breath,
+            Effect::Wave,
+            Effect::Flash,
+        ] {
+            let mut cfg = blank();
+            cfg.apply(effect, &[[0, 116, 255]]);
+            assert_eq!(cfg.colours(), [[0, 116, 255]], "{effect:?}");
+            assert!(cfg.made_by(effect, &cfg.colours()), "{effect:?}");
+        }
+    }
+
+    #[test]
+    fn rotation_moves_without_popping() {
+        let mut cfg = blank();
+        cfg.apply(Effect::Rotation, &[[0, 0, 255]]);
+        let (frames, leds) = (cfg.frames(), cfg.leds());
+        let blue = |f: usize, l: usize| cfg.led(f, l)[2] as i32;
+        for l in 0..leds {
+            // every LED reaches full strength
+            assert_eq!((0..frames).map(|f| blue(f, l)).max(), Some(255), "LED {l}");
+            // and never jumps more than half of it from one frame to the next
+            for f in 0..frames {
+                let jump = (blue((f + 1) % frames, l) - blue(f, l)).abs();
+                assert!(jump <= 128, "LED {l} frame {f}: {jump}");
+            }
+        }
+        // the total light stays put (within rounding, 2 %), so the comet does
+        // not pulse as it moves; the hard-edged comet varied by about 30 %
+        let totals: Vec<i32> = (0..frames)
+            .map(|f| (0..leds).map(|l| blue(f, l)).sum())
+            .collect();
+        let (lo, hi) = (totals.iter().min().unwrap(), totals.iter().max().unwrap());
+        assert!((hi - lo) * 50 <= *hi, "{totals:?}");
+    }
+
+    #[test]
     fn factory_lighting_reads_as_an_animation() {
         // the factory rainbow is stored as Default (7), not one of ours
         let cfg = LedConfig {
+            slot: 0,
             blob: include_bytes!("../led_backup_original.bin").to_vec(),
         };
         assert!(cfg.effect().animated());

@@ -326,6 +326,7 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
 
     // Mini preview: the effect's frames sampled over time.
     let mut cfg = LedConfig {
+        slot: 0,
         blob: preview_blob(),
     };
     cfg.apply(e, colours);

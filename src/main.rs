@@ -8,6 +8,7 @@ use apex5::profile::{Macro, Profile};
 use apex5::worker::{self, Cmd, Event, Handle};
 use eframe::egui;
 
+mod remember;
 mod ui;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -163,14 +164,17 @@ impl App {
             }
             Event::Settings(s) => self.settings = Some(s),
             Event::Led(cfg) => {
-                let effect = cfg.effect();
-                let mut colours: Vec<Rgb> = vec![];
-                for l in 0..cfg.leds() {
-                    let c = cfg.led(0, l);
-                    if c != [0, 0, 0] && !colours.contains(&c) && colours.len() < 5 {
-                        colours.push(c);
-                    }
-                }
+                // What this editor last wrote, while the pad still plays it;
+                // otherwise read back from the frames.
+                let recalled = self
+                    .info
+                    .as_ref()
+                    .and_then(|i| remember::recall(&i.uid, cfg.slot))
+                    .filter(|c| cfg.made_by(c.effect, &c.colours));
+                let (effect, mut colours): (Effect, Vec<Rgb>) = match recalled {
+                    Some(c) => (c.effect, c.colours),
+                    None => (cfg.effect(), cfg.colours()),
+                };
                 if colours.is_empty() || effect == Effect::Rainbow {
                     colours = vec![[0, 116, 255]];
                 }
@@ -239,6 +243,13 @@ impl eframe::App for App {
         {
             led.dirty_since = None;
             let cfg = led.cfg.clone();
+            if let Some(i) = &self.info {
+                let choice = remember::Choice {
+                    effect: led.effect,
+                    colours: led.colours.clone(),
+                };
+                remember::store(&i.uid, cfg.slot, choice);
+            }
             self.led_flash_dirty = true;
             let _ = self.h.tx.send(Cmd::WriteLed(cfg));
         }

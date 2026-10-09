@@ -2,10 +2,12 @@
 //!
 //!   apex5ctl info              identity, battery, firmware, settings, active profile
 //!   apex5ctl led show
+//!   apex5ctl led slots         read the lighting of all four slots, keep the active one
 //!   apex5ctl led color RRGGBB [brightness]
 //!   apex5ctl led brightness N
 //!   apex5ctl led probe         light each LED slot in turn (Enter for the next), then restore
 //!   apex5ctl led save          commit lighting to flash
+//!   apex5ctl profile switch N  make slot N (1-4) the running profile
 //!   apex5ctl profile title T   rename the active profile (RAM only)
 
 use anyhow::{Result, bail};
@@ -91,6 +93,15 @@ fn main() -> Result<()> {
     let mut dev = Device::open()?;
     match a.as_slice() {
         ["info"] | [] => info(&mut dev)?,
+        ["profile", "switch", n] => {
+            let slot: u8 = n.parse()?;
+            if !(1..=profile::SLOTS).contains(&slot) {
+                bail!("slot must be 1..{}", profile::SLOTS);
+            }
+            // Reading a slot is what makes it the running one.
+            profile::read(&mut dev, slot - 1)?;
+            println!("active slot {}", profile::status(&mut dev)?.active + 1);
+        }
         ["profile", "title", name] => {
             // Working memory only; not committed to flash.
             let st = profile::status(&mut dev)?;
@@ -101,18 +112,56 @@ fn main() -> Result<()> {
             let back = profile::read(&mut dev, st.active)?;
             println!("wrote {n} packets; pad now says {:?}", back.title());
         }
+        ["led", "slots"] => {
+            let before = profile::status(&mut dev)?.active;
+            let leds: Vec<_> = (0..profile::SLOTS)
+                .map(|slot| lighting::LedConfig::read(&mut dev, slot))
+                .collect::<Result<_>>()?;
+            // Reading 167 makes that slot the running one: go back.
+            let after = profile::status(&mut dev)?.active;
+            profile::read(&mut dev, before)?;
+            let restored = profile::status(&mut dev)?.active;
+            println!(
+                "active slot {} before, {} after reading, {} restored",
+                before + 1,
+                after + 1,
+                restored + 1
+            );
+            for (slot, l) in leds.iter().enumerate() {
+                let same: Vec<_> = (0..slot)
+                    .filter(|&o| leds[o] == *l)
+                    .map(|o| o + 1)
+                    .collect();
+                println!(
+                    "slot {}: mode {} brightness {} cycle {} {:?} first LED {:?}{}",
+                    slot + 1,
+                    l.mode(),
+                    l.brightness(),
+                    l.cycle(),
+                    l.effect(),
+                    l.led(0, 0),
+                    if same.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  (same as slot {same:?})")
+                    }
+                );
+            }
+        }
         ["led", rest @ ..] => {
-            let old = lighting::LedConfig::read(&mut dev)?;
+            let st = profile::status(&mut dev)?;
+            let old = lighting::LedConfig::read(&mut dev, st.active)?;
             let mut new = old.clone();
             match rest {
                 ["show"] => {
                     println!(
-                        "mode {} brightness {} cycle {} {}x{}",
+                        "mode {} brightness {} cycle {} {}x{} flare-with-rumble {}",
                         old.mode(),
                         old.brightness(),
                         old.cycle(),
                         old.frames(),
-                        old.leds()
+                        old.leds(),
+                        old.grip_sync()
                     );
                     return Ok(());
                 }
@@ -140,7 +189,6 @@ fn main() -> Result<()> {
                     return Ok(());
                 }
                 ["save"] => {
-                    let st = profile::status(&mut dev)?;
                     profile::save(&mut dev, st.active, st.versions[st.active as usize])?;
                     println!("saved");
                     return Ok(());

@@ -172,15 +172,16 @@ impl Worker {
     fn refresh(&mut self) -> Result<()> {
         let s = device::read_settings(self.dev())?;
         self.send(Event::Settings(s));
-        let led = LedConfig::read(self.dev())?;
-        self.led = Some(led.clone());
-        self.send(Event::Led(led));
         let st = profile::status(self.dev())?;
         self.load_profile(st.active, st.active, st.versions[st.active as usize])
     }
 
-    /// Read `slot` (which makes it active) and re-engage its resistance effects.
+    /// Read `slot` and its lighting (either read makes it active) and
+    /// re-engage its resistance effects.
     fn load_profile(&mut self, slot: u8, active: u8, tag: u16) -> Result<()> {
+        let led = LedConfig::read(self.dev(), slot)?;
+        self.led = Some(led.clone());
+        self.send(Event::Led(led));
         let p = profile::read(self.dev(), slot)?;
         self.profile = Some(p.clone());
         self.engage(&p, false)?;
@@ -256,6 +257,13 @@ impl Worker {
                 ));
             }
             Cmd::WriteLed(new) => {
+                let st = profile::status(self.dev())?;
+                if st.active != new.slot {
+                    anyhow::bail!(
+                        "на геймпаде переключён профиль ({}), подсветка не записана",
+                        st.active + 1
+                    );
+                }
                 let old = self.led.clone();
                 new.write(self.dev(), old.as_ref())?;
                 self.led = Some(new);

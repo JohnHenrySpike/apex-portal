@@ -8,7 +8,9 @@ Apex 5*; it is not a claim made by this extraction.
 Scope: mapping-profile commands **161, 162, 163, 164, 165, 166, 171** (and the related destructive
 **175**), the **840-byte profile blob**, and **macros**: the protocol 3.1 page inside the profile,
 which the Apex 5 uses, and the protocol 3.2 store behind commands 172, 173 and 174, which the Apex 5
-does not use. Lighting (167/168/169) is out of scope and is already implemented.
+does not use. Lighting (167/168/169) is out of scope and is already implemented. Note only that
+lighting is **kept per slot** (cfgId = slot) and that **reading 167 makes that slot the running
+one**, like 163 (both HW).
 
 ## 0. Citation keys
 
