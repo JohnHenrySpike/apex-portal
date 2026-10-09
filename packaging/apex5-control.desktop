@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Apex 5 Control
+Comment=Настройка геймпада Flydigi Apex 5
+Exec=apex5
+Icon=input-gaming
+Terminal=false
+Categories=Settings;HardwareSettings;Game;
+StartupWMClass=apex5-control
