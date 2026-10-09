@@ -25,6 +25,8 @@ pub enum Cmd {
     SetNumber(u8, u8),
     SetNickname(String),
     Stream(bool),
+    /// Run the grip motors at (left, right) 0..255 for a moment, then stop.
+    TestRumble(u8, u8),
 }
 
 pub enum Event {
@@ -282,6 +284,23 @@ impl Worker {
                 let info = device::read_info(self.dev())?;
                 self.send(Event::Connected(info));
                 self.send(Event::Message("Имя записано".into()));
+            }
+            Cmd::TestRumble(left, right) => {
+                let run = device::rumble(self.dev(), left, right);
+                let until = Instant::now() + Duration::from_millis(800);
+                while run.is_ok() && Instant::now() < until {
+                    // keep the input tester fed while the motors run
+                    if self.streaming {
+                        self.pump_input();
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                }
+                // Always stop: the motors keep running until told otherwise.
+                let stop = match self.dev.as_mut() {
+                    Some(d) => device::rumble(d, 0, 0),
+                    None => Ok(()), // gone, and its motors with it
+                };
+                run.and(stop)?;
             }
             Cmd::Stream(on) => {
                 if on && !self.streaming {

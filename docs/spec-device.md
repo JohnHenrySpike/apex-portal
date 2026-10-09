@@ -679,10 +679,11 @@ vibration-related packet that is safe to emit is the explicit **stop** in row 1.
 
 **Recommended policy:**
 - Whitelist outgoing command ids.
-- Never emit 0x12 with non-zero levels.
+- Emit 0x12 only from an explicit user-run rumble test: grip motors only (raw[7]/[8] = 0), under a
+  second, always followed by the stop packet. Apex 5 Control does this (`device::rumble`).
 - Never emit 82, 81 mode 2/5, or 83–87.
 - Never replay stored trigger effects.
-- An explicit grip-stop `0x12 00 00` is the only allowed vibration-family packet.
+- 0x12 in SDL's form (length 6, no checksum) is the only allowed vibration-family packet.
 
 ---
 
@@ -723,7 +724,7 @@ vibration-related packet that is safe to emit is the explicit **stop** in row 1.
 | 19 | subs 1, 4, 5, 6, 7, 8, 9 |
 | 21, 22, 23 | numeric settings |
 | 24 | nickname |
-| 0x12 | **stop only** |
+| 0x12 | grip motors only (length 6, trigger bytes 0); the rumble test stops it within a second |
 
 - Everything else is behind an explicit "danger" gate, or absent.
 - Command 31 is allowed only as the hard-coded `chip=4` step of a wired screen upload.

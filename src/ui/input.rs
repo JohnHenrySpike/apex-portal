@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use apex5::device::{BUTTONS, InputState};
+use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 
 use super::theme::{self, CARD_HI, DIM, FAINT, TEXT, accent};
@@ -66,6 +67,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 );
             });
         });
+        ui.add_space(12.0);
+        rumble(app, ui);
         return;
     };
 
@@ -159,6 +162,38 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(12.0);
         right(&mut st, ui);
     }
+    ui.add_space(12.0);
+    rumble(app, ui);
+}
+
+/// Runs the grip motors for under a second at the chosen strengths.
+fn rumble(app: &mut App, ui: &mut egui::Ui) {
+    card_titled(ui, "Вибрация", |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 260.0).clamp(80.0, 320.0);
+        let (mut l, mut r) = app.rumble;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Левый мотор").color(DIM));
+            ui.add(egui::Slider::new(&mut l, 0..=100).suffix(" %"));
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Правый мотор").color(DIM));
+            ui.add(egui::Slider::new(&mut r, 0..=100).suffix(" %"));
+        });
+        app.rumble = (l, r);
+        ui.add_space(4.0);
+        let level = |v: u8| (v as u32 * 255 / 100) as u8;
+        ui.horizontal(|ui| {
+            let idle = !app.busy;
+            for (text, left, right) in [("Левый", l, 0), ("Правый", 0, r), ("Оба", l, r)]
+            {
+                if widgets::secondary(ui, text, idle && left.max(right) > 0).clicked() {
+                    app.send(Cmd::TestRumble(level(left), level(right)));
+                }
+            }
+        });
+        ui.add_space(4.0);
+        hint(ui, "Моторы работают меньше секунды и останавливаются сами.");
+    });
 }
 
 fn stick(ui: &mut egui::Ui, w: f32, name: &str, (x, y): (f32, f32)) {

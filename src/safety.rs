@@ -1,7 +1,8 @@
 //! Last line of defence: every packet is checked here right before it is
 //! written to the pad. Anything not explicitly allowed is refused.
 //!
-//! Never allowed: rumble (0x12), rumble-to-trigger bind (82), vibrating
+//! Grip rumble (0x12) only in SDL's form for the two grip motors, for the
+//! rumble test. Never allowed: rumble-to-trigger bind (82), vibrating
 //! trigger modes (81 mode 2/5), firmware/upgrade mode (31), factory reset
 //! (253), reset-all-profiles (175), mode switch (27), restart (29), report
 //! rate (20), test floods (242/245), the HID picture family (208-211), the
@@ -49,7 +50,11 @@ pub fn check(pkt: &[u8; 32]) -> Result<()> {
         161..=166 => Ok(()),
         // lighting: read, write
         167..=169 => Ok(()),
-        0x12 | 82 => bail!("blocked: vibration command {cmd}"),
+        // grip rumble test: SDL's packet, length 6, no checksum; the trigger
+        // motor bytes stay 0 (the Apex 5 has none)
+        0x12 if pkt[4] == 6 && p[2] == 0 && p[3] == 0 => Ok(()),
+        0x12 => bail!("blocked: rumble may only drive the two grip motors"),
+        82 => bail!("blocked: vibration command {cmd}"),
         // Space Station sends 254 when its server says so, then restarts the
         // pad; the model id lives in flash and both apps key off it.
         254 => bail!("blocked: device-type rewrite (254) changes the pad's model id"),
@@ -64,8 +69,17 @@ mod tests {
     use crate::hid::build;
 
     #[test]
-    fn rumble_is_refused() {
-        assert!(check(&build(0x12, &[0, 0, 0, 0], false)).is_err());
+    fn rumble_reaches_only_the_grip_motors() {
+        let rumble = |l, r, lt, rt| {
+            let mut pkt = build(0x12, &[l, r, lt, rt], false);
+            pkt[4] = 6;
+            pkt
+        };
+        assert!(check(&rumble(255, 128, 0, 0)).is_ok());
+        assert!(check(&rumble(0, 0, 0, 0)).is_ok());
+        assert!(check(&rumble(0, 0, 255, 0)).is_err());
+        assert!(check(&rumble(0, 0, 0, 1)).is_err());
+        assert!(check(&build(0x12, &[0, 0, 0, 0], false)).is_err()); // length 4
         assert!(check(&build(82, &[1, 2, 255, 0, 0, 0, 0, 0], false)).is_err());
     }
 

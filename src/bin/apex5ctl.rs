@@ -56,7 +56,7 @@ fn info(dev: &mut Device) -> Result<()> {
     let p = profile::read(dev, st.active)?;
     let g = p.grip_vibration();
     println!(
-        "  title {:?} proto {:#06x} tag {}  grip-rumble master={} L={} R={} (read only)",
+        "  title {:?} proto {:#06x} tag {}  grip-rumble master={} L={} R={}",
         p.title(),
         p.proto_version(),
         p.data_version(),

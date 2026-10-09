@@ -20,7 +20,10 @@ const KEYS: usize = 13;
 const STICK_CORE: [usize; 2] = [109, 116];
 const TRIGGER_TRAVEL: [usize; 2] = [123, 130];
 const GYRO: usize = 137;
-const GRIP_VIB: usize = 145; // ..154, read only
+const GRIP_VIB: usize = 145; // ..154; only the on/off switches change
+/// Grip-rumble switches: master, left, right. 0 = on, 0xFF = off. Space
+/// Station flips left and right; the spec calls 145 the master.
+const GRIP_SWITCHES: [usize; 3] = [145, 146, 150];
 const FORCE: [usize; 2] = [185, 205];
 const DATA_VERSION: usize = 225;
 const MACRO_PAGE: usize = 230;
@@ -140,7 +143,7 @@ pub struct MacroStep {
 pub const MACRO_MAX: usize = 5;
 pub const MACRO_STEPS_MAX: usize = 128;
 
-/// Grip-rumble state, shown read-only: this app never changes it.
+/// Grip-rumble state. The app only flips its on/off switches.
 pub struct GripVibration {
     pub master: bool,
     pub left: bool,
@@ -543,10 +546,20 @@ impl Profile {
                 != other.blob[MACRO_INTERVAL..MACRO_INTERVAL + 5]
     }
 
+    /// Switch grip rumble on or off: master, left and right together (0 = on,
+    /// 0xFF = off). The motors' strength windows stay as they are.
+    pub fn set_grip_vibration(&mut self, on: bool) {
+        for o in GRIP_SWITCHES {
+            self.blob[o] = if on { 0 } else { 0xFF };
+        }
+    }
+
     /// Refuse any write that would change rumble state: grip vibration,
     /// trigger motors, the rumble-to-trigger bind, or a vibrating effect mode.
+    /// The one change let through is a grip on/off switch set to 0 or 0xFF.
     pub fn check_no_vibration_change(&self, original: &Profile) -> Result<()> {
-        if self.blob[GRIP_VIB..183] != original.blob[GRIP_VIB..183] {
+        let switched = |o: usize| GRIP_SWITCHES.contains(&o) && matches!(self.blob[o], 0 | 0xFF);
+        if (GRIP_VIB..183).any(|o| self.blob[o] != original.blob[o] && !switched(o)) {
             bail!("запись отменена: изменились бы настройки вибрации");
         }
         for o in FORCE {
@@ -769,8 +782,30 @@ mod tests {
         assert_eq!(p.force(1).mode, 0);
         p.check_no_vibration_change(&orig).unwrap();
         let mut bad = orig.clone();
-        bad.blob[145] = 0xFF;
+        bad.blob[147] = 0;
         assert!(bad.check_no_vibration_change(&orig).is_err());
+    }
+
+    #[test]
+    fn grip_vibration_switches_off_and_back_on() {
+        let on = factory();
+        assert!(on.grip_vibration().master);
+        let mut off = on.clone();
+        off.set_grip_vibration(false);
+        let g = off.grip_vibration();
+        assert!(!g.master && !g.left && !g.right);
+        off.check_no_vibration_change(&on).unwrap();
+        let mut back = off.clone();
+        back.set_grip_vibration(true);
+        assert_eq!(back.blob, on.blob);
+        back.check_no_vibration_change(&off).unwrap();
+        // a switch may only be 0 or 0xFF
+        let mut odd = on.clone();
+        odd.blob[146] = 1;
+        assert!(odd.check_no_vibration_change(&on).is_err());
+        // the motor windows stay as they were
+        assert_eq!(off.blob[147..150], on.blob[147..150]);
+        assert_eq!(off.blob[151..183], on.blob[151..183]);
     }
 
     #[test]

@@ -141,6 +141,15 @@ pub fn set_feature(dev: &mut Device, sub: u8, on: bool) -> Result<()> {
     Ok(())
 }
 
+/// Drives the grip motors directly (0x12, SDL's packet: length 6, no
+/// checksum, no reply), 0..255 each. The motors keep running until stopped
+/// with `rumble(dev, 0, 0)`.
+pub fn rumble(dev: &mut Device, left: u8, right: u8) -> Result<()> {
+    let mut pkt = build(0x12, &[left, right, 0, 0], false);
+    pkt[4] = 6;
+    dev.send(pkt)
+}
+
 /// 21 = stick precision, 22 = centre sensitivity, 23 = sleep minutes.
 pub fn set_number(dev: &mut Device, cmd: u8, value: u8) -> Result<()> {
     need(dev.query(cmd, &[value], T)?, "setting write")?;

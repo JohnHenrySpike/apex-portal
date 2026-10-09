@@ -57,6 +57,8 @@ pub struct App {
     pub title: String,
     pub streaming: bool,
     pub selected_key: u8,
+    /// Rumble test strength, left and right, in %.
+    pub rumble: (u8, u8),
     shots: Option<Shots>,
 }
 
@@ -84,6 +86,7 @@ impl App {
             title: String::new(),
             streaming: false,
             selected_key: 4,
+            rumble: (50, 50),
             shots: Shots::from_env(),
         }
     }

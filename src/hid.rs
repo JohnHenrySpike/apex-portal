@@ -149,6 +149,11 @@ impl Device {
             .map_err(|e| anyhow!("device write failed: {e}"))
     }
 
+    /// Send without waiting for a reply.
+    pub fn send(&mut self, pkt: [u8; PACKET_LEN]) -> Result<()> {
+        self.write_packet(&pkt)
+    }
+
     /// Send and collect replies to the same command id until `done` says stop
     /// or `wait` elapses.
     pub fn request(

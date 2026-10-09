@@ -952,6 +952,29 @@ fn triggers(p: &mut Profile, ui: &mut egui::Ui) {
         ui,
         "Сопротивление начинает работать после «Применить». Вибрационные режимы курков приложение не включает.",
     );
+    ui.add_space(12.0);
+    grip_vibration_card(p, ui);
+}
+
+/// Grip rumble from games, on or off for this profile.
+fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
+    let g = p.grip_vibration();
+    let mut on = g.master && (g.left || g.right);
+    card_titled(ui, "Вибрация рукояток", |ui| {
+        if widgets::toggle_row(
+            ui,
+            "Вибрация от игр",
+            "Моторы в рукоятках, которыми управляет игра",
+            &mut on,
+        ) {
+            p.set_grip_vibration(on);
+        }
+        ui.add_space(4.0);
+        hint(
+            ui,
+            "В геймпад попадает после «Применить». Силу вибрации приложение не меняет; проверить моторы можно на вкладке «Тест ввода».",
+        );
+    });
 }
 
 fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
