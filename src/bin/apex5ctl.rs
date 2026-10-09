@@ -4,6 +4,7 @@
 //!   apex5ctl led show
 //!   apex5ctl led color RRGGBB [brightness]
 //!   apex5ctl led brightness N
+//!   apex5ctl led probe         light each LED slot in turn (Enter for the next), then restore
 //!   apex5ctl led save          commit lighting to flash
 //!   apex5ctl profile title T   rename the active profile (RAM only)
 
@@ -121,13 +122,30 @@ fn main() -> Result<()> {
                     new.set_brightness(b.parse()?);
                 }
                 ["brightness", b] => new.set_brightness(b.parse()?),
+                ["probe"] => {
+                    // RAM only: the pad drops this on sleep, and the end
+                    // writes back what was there.
+                    let mut prev = old.clone();
+                    for slot in 0..old.leds() {
+                        let mut one = old.clone();
+                        one.single(slot, [255, 255, 255]);
+                        one.set_brightness(60);
+                        one.write(&mut dev, Some(&prev))?;
+                        prev = one;
+                        println!("slot {slot} is lit; Enter for the next");
+                        std::io::stdin().read_line(&mut String::new())?;
+                    }
+                    old.write(&mut dev, Some(&prev))?;
+                    println!("lighting restored");
+                    return Ok(());
+                }
                 ["save"] => {
                     let st = profile::status(&mut dev)?;
                     profile::save(&mut dev, st.active, st.versions[st.active as usize])?;
                     println!("saved");
                     return Ok(());
                 }
-                _ => bail!("usage: apex5ctl led show|color RRGGBB [B]|brightness N|save"),
+                _ => bail!("usage: apex5ctl led show|color RRGGBB [B]|brightness N|probe|save"),
             }
             println!("wrote {} packets", new.write(&mut dev, Some(&old))?);
         }

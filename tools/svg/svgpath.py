@@ -3,7 +3,7 @@ import math
 import re
 
 import pathops
-from pathops import ArcSize, Direction, Path, PathOp, PathVerb
+from pathops import ArcSize, Direction, LineCap, LineJoin, Path, PathOp, PathVerb
 
 _TOK = re.compile(r"[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")
 _ARGS = dict(M=2, L=2, H=1, V=1, C=6, S=4, Q=4, T=2, A=7, Z=0)
@@ -112,6 +112,15 @@ def diff(a, b) -> Path:
 
 def inter(a, b) -> Path:
     return pathops.op(a, b, PathOp.INTERSECTION)
+
+
+def stroked(p: Path, width) -> Path:
+    """The area a round-joined line of the given width along p covers."""
+    q = Path(p)
+    q.stroke(width, LineCap.ROUND_CAP, LineJoin.ROUND_JOIN, 4)
+    q.convertConicsToQuads(0.01)
+    q.simplify()
+    return q
 
 
 def outer(p: Path) -> Path:

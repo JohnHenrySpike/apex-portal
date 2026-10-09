@@ -216,7 +216,7 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
                     interactive: true,
                     selected: Some(**selected),
                     marked: &marked,
-                    show_back: true,
+                    show_tiles: true,
                     screen: Some(screen),
                     ..Default::default()
                 },

@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use apex5::lighting::{Effect, LedConfig, hue};
+use apex5::lighting::{Effect, LedConfig, hue, left_to_right};
 use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
 
@@ -149,7 +149,11 @@ fn strip(ui: &mut egui::Ui, frame: &[[u8; 3]], bright: f32) {
     let n = frame.len().max(1);
     let w = rect.width() / n as f32;
     let k = 0.3 + 0.7 * bright;
-    for (i, c) in frame.iter().enumerate() {
+    for (i, c) in left_to_right(frame.len())
+        .iter()
+        .map(|&s| &frame[s])
+        .enumerate()
+    {
         let r = egui::Rect::from_min_size(
             pos2(rect.left() + i as f32 * w, rect.top()),
             vec2(w, rect.height()),
@@ -338,7 +342,11 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
     p.rect_filled(bar, CornerRadius::same(4), Color32::from_rgb(10, 12, 15));
     let n = frame.len().max(1);
     let cw = bar.width() / n as f32;
-    for (i, c) in frame.iter().enumerate() {
+    for (i, c) in left_to_right(frame.len())
+        .iter()
+        .map(|&s| &frame[s])
+        .enumerate()
+    {
         let cr = egui::Rect::from_min_size(
             pos2(bar.left() + i as f32 * cw, bar.top()),
             vec2(cw, bar.height()),

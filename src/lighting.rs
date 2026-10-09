@@ -22,6 +22,35 @@ const OFF_FRAMES: usize = 20;
 
 pub type Rgb = [u8; 3];
 
+/// Where each of the 12 LEDs sits across the pad, left to right (0..1), so
+/// effects follow the pad rather than the slot order. Slots 1 and 0 light the
+/// FLYDIGI plate on the left grip (left, right), slots 2..11 the strip along
+/// the bottom edge, left to right. Taken from the LED marks in
+/// assets/apex5.svg; src/ui/pad.rs checks that they still match.
+pub const LED_X: [f32; 12] = [
+    0.117, 0.0, 0.213, 0.345, 0.419, 0.512, 0.582, 0.631, 0.700, 0.793, 0.867, 1.0,
+];
+
+/// Slots ordered as their LEDs sit on the pad, left to right.
+pub fn left_to_right(leds: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..leds).collect();
+    if leds == LED_X.len() {
+        order.sort_by(|&a, &b| LED_X[a].total_cmp(&LED_X[b]));
+    }
+    order
+}
+
+/// The LED's place for effects, spread over 0..(n-1)/n like evenly spaced
+/// slots, since colour lists wrap around at 1.
+fn position(slot: usize, leds: usize) -> f32 {
+    let along = if leds == LED_X.len() {
+        LED_X[slot] * (leds - 1) as f32
+    } else {
+        slot as f32
+    };
+    along / leds as f32
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Effect {
     Off,
@@ -171,7 +200,7 @@ impl LedConfig {
         let (leds, frames) = (self.leds(), self.frames());
         for fr in 0..frames {
             for l in 0..leds {
-                let c = f(fr as f32 / frames as f32, l as f32 / leds as f32);
+                let c = f(fr as f32 / frames as f32, position(l, leds));
                 let o = OFF_FRAMES + (fr * leds + l) * 3;
                 self.blob[o..o + 3].copy_from_slice(&c);
             }
@@ -180,6 +209,19 @@ impl LedConfig {
         self.blob[OFF_LOOP_END] = (frames - 1) as u8;
         self.blob[OFF_MODE] = effect.id();
         self.blob[OFF_CLICK_FEEDBACK] = 0;
+    }
+
+    /// Lights one LED slot and leaves the others dark, to find out which LED
+    /// on the pad a slot drives.
+    pub fn single(&mut self, slot: usize, colour: Rgb) {
+        let leds = self.leds() as f32;
+        self.fill(Effect::StaticMulti, |_, l| {
+            if (l * leds).round() as usize == slot {
+                colour
+            } else {
+                [0; 3]
+            }
+        });
     }
 
     pub fn apply(&mut self, effect: Effect, colours: &[Rgb]) {

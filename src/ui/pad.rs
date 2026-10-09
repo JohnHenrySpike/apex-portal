@@ -1,16 +1,16 @@
 //! The Apex 5, drawn from Flydigi's own line drawing.
 //!
 //! `assets/apex5.svg` (built by `tools/svg`) is rasterised with resvg at the
-//! exact on-screen size. Key highlights, the moving stick caps, the light
-//! strips, the screen text and the back buttons are painted over it.
-//! Coordinates are the drawing's 984-wide space; the pad spans x 166..818,
-//! y 40..472 and is scaled to fit.
+//! exact on-screen size. Key highlights, the moving stick caps, the lighting,
+//! the screen text and the button labels are painted over it. Coordinates are
+//! the drawing's 984-wide space. The pad itself spans its `data-pad-view`;
+//! the whole viewBox adds the shoulder and back buttons as tiles around it.
 
 use std::sync::OnceLock;
 
 use eframe::egui::{
-    self, Color32, ColorImage, CornerRadius, FontId, Id, Mesh, Pos2, Rect, Sense, Shape, Stroke,
-    StrokeKind, TextureHandle, TextureOptions, Ui, Vec2, pos2, vec2,
+    self, Color32, ColorImage, CornerRadius, Id, Mesh, Pos2, Rect, Sense, Shape, Stroke,
+    TextureHandle, TextureOptions, Ui, Vec2, epaint::TextShape, pos2, vec2,
 };
 use resvg::{tiny_skia, usvg};
 
@@ -19,44 +19,20 @@ use super::widgets::lerp_colour;
 
 const SVG: &str = include_str!("../../assets/apex5.svg");
 
-/// The drawing's viewBox: x, y, width, height.
-const VIEW: [f32; 4] = [166.0, 40.0, 652.0, 432.0];
-/// Height with the back-button row below the pad.
-const H_BACK: f32 = 492.0;
-const MID: f32 = 492.0;
 const SCREEN: [f32; 4] = [452.65, 144.48, 531.35, 182.33];
 /// How far a stick cap moves at full deflection.
 const STICK_TRAVEL: f32 = 13.0;
+/// The drawing's line colour.
+const INK: Color32 = Color32::from_rgb(157, 183, 220);
 
-/// Light strips along the outer edge of each grip, 11 units inside the body
-/// outline: left bottom→top, then right top→bottom, so the 12 LEDs run
-/// clockwise.
-const LEDS: [[f32; 2]; 12] = [
-    [185.4, 416.5],
-    [180.9, 387.7],
-    [182.6, 357.4],
-    [188.3, 326.4],
-    [196.4, 295.0],
-    [205.8, 263.3],
-    [778.2, 263.3],
-    [787.6, 295.0],
-    [795.7, 326.4],
-    [801.4, 357.4],
-    [803.1, 387.7],
-    [798.6, 416.5],
-];
+/// Which of the lighting block's 12 colours each LED shows, as found on a
+/// pad with `apex5ctl led probe`: ten along the strip, left to right, and the
+/// two under the FLYDIGI plate (left, right) take the first two.
+const STRIP_SLOTS: [usize; 10] = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const PLATE_SLOTS: [usize; 2] = [1, 0];
 
-pub const BACK_KEYS: [(u8, &str); 6] = [
-    (18, "M1"),
-    (19, "M2"),
-    (20, "M3"),
-    (21, "M4"),
-    (22, "LM"),
-    (23, "RM"),
-];
-
-/// Key areas in the drawing (`#keys`), by key id.
-const FRONT_KEYS: [(u8, &str); 17] = [
+/// Key areas in the drawing, by key id: `#keys` on the pad, `#tiles` around it.
+const KEYS: [(u8, &str); 23] = [
     (0, "dpad-up"),
     (1, "dpad-right"),
     (2, "dpad-down"),
@@ -73,8 +49,19 @@ const FRONT_KEYS: [(u8, &str); 17] = [
     (13, "rt"),
     (14, "ls"),
     (15, "rs"),
+    (18, "m1"),
+    (19, "m2"),
+    (20, "m3"),
+    (21, "m4"),
+    (22, "lm"),
+    (23, "rm"),
     (27, "home"),
 ];
+
+/// Keys drawn as tiles around the pad rather than on it.
+fn is_tile(id: u8) -> bool {
+    matches!(id, 10..=13 | 18..=23)
+}
 
 /// Stick caps are drawn separately so they can move.
 const CAPS: [(u8, &str); 2] = [(14, "ls-cap"), (15, "rs-cap")];
@@ -95,7 +82,8 @@ pub struct Opts<'a> {
     pub sticks: Option<[(f32, f32); 2]>,
     pub triggers: Option<(f32, f32)>,
     pub screen: Option<&'a str>,
-    pub show_back: bool,
+    /// Show the shoulder and back buttons as tiles around the pad.
+    pub show_tiles: bool,
 }
 
 pub struct PadResponse {
@@ -123,33 +111,136 @@ impl Area {
         let (w, h) = (self.max[0] - self.min[0], self.max[1] - self.min[1]);
         [self.max[0] - w * 0.15, self.min[1] + h * 0.15]
     }
+
+    fn centre(&self) -> [f32; 2] {
+        [
+            (self.min[0] + self.max[0]) / 2.0,
+            (self.min[1] + self.max[1]) / 2.0,
+        ]
+    }
+}
+
+/// A point of the light strip: position, unit normal and how far along the
+/// strip it is (0..1).
+#[derive(Clone, Copy)]
+struct StripPoint {
+    at: [f32; 2],
+    normal: [f32; 2],
+    t: f32,
 }
 
 struct Art {
-    /// The drawing without the stick caps.
-    base: usvg::Tree,
-    /// The full drawing, for rendering the caps on their own.
+    /// The whole drawing without the stick caps.
     full: usvg::Tree,
+    /// The pad alone: no stick caps, no tiles, cropped to the pad.
+    pad: usvg::Tree,
+    /// The drawing as it is, for rendering the caps on their own.
+    src: usvg::Tree,
+    /// viewBox of the whole drawing and of the pad alone: x, y, width, height.
+    view: [f32; 4],
+    pad_view: [f32; 4],
     areas: Vec<(u8, Area)>,
+    plate: Area,
+    /// Direction of the plate's long side, in radians.
+    plate_angle: f32,
+    strip: Vec<StripPoint>,
+    /// Where along the strip (0..1) each of its LEDs sits, left to right.
+    strip_leds: Vec<f32>,
+    /// The plate's LEDs.
+    plate_leds: Vec<[f32; 2]>,
+    /// Tile labels: key, text, centre.
+    labels: Vec<(u8, String, [f32; 2])>,
 }
 
 fn art() -> &'static Art {
     static ART: OnceLock<Art> = OnceLock::new();
     ART.get_or_init(|| {
-        let opt = usvg::Options::default();
-        let full = usvg::Tree::from_str(SVG, &opt).expect("assets/apex5.svg parses");
-        let base = usvg::Tree::from_str(&without_groups(SVG, &["ls-cap", "rs-cap"]), &opt)
-            .expect("assets/apex5.svg parses");
-        let areas = FRONT_KEYS
-            .iter()
-            .map(|&(key, id)| {
-                let node = full
-                    .node_by_id(id)
-                    .unwrap_or_else(|| panic!("assets/apex5.svg has no #{id}"));
-                (key, area(node))
+        let doc = usvg::roxmltree::Document::parse(SVG).expect("assets/apex5.svg parses");
+        let root = doc.root_element();
+        let rect = |name: &str| -> [f32; 4] {
+            let v: Vec<f32> = root
+                .attribute(name)
+                .unwrap_or_else(|| panic!("assets/apex5.svg has no {name}"))
+                .split_whitespace()
+                .map(|n| n.parse().expect("a number"))
+                .collect();
+            [v[0], v[1], v[2], v[3]]
+        };
+        let (view, pad_view) = (rect("viewBox"), rect("data-pad-view"));
+        let led_points = |which: &str| -> Vec<[f32; 2]> {
+            doc.descendants()
+                .filter(|n| n.attribute("data-led") == Some(which))
+                .map(|n| {
+                    let num = |a: &str| n.attribute(a).and_then(|v| v.parse().ok());
+                    [num("cx").expect("LED x"), num("cy").expect("LED y")]
+                })
+                .collect()
+        };
+        let labels = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("text"))
+            .filter_map(|n| {
+                let num = |a: &str| n.attribute(a)?.parse::<f32>().ok();
+                Some((
+                    n.attribute("data-key")?.parse().ok()?,
+                    n.text()?.to_owned(),
+                    [num("x")?, num("y")?],
+                ))
             })
             .collect();
-        Art { base, full, areas }
+
+        let opt = usvg::Options::default();
+        let tree = |svg: &str| usvg::Tree::from_str(svg, &opt).expect("assets/apex5.svg parses");
+        let src = tree(SVG);
+        let no_caps = without_groups(SVG, &["ls-cap", "rs-cap"]);
+        let full = tree(&no_caps);
+        let pad = tree(&without_groups(&no_caps, &["tiles"]).replacen(
+            &format!("viewBox=\"{}\"", root.attribute("viewBox").unwrap()),
+            &format!("viewBox=\"{}\"", root.attribute("data-pad-view").unwrap()),
+            1,
+        ));
+
+        let node = |id: &str| {
+            src.node_by_id(id)
+                .unwrap_or_else(|| panic!("assets/apex5.svg has no #{id}"))
+        };
+        let mut areas: Vec<(u8, Area)> = KEYS
+            .iter()
+            .map(|&(key, id)| (key, area(node(id), view)))
+            .collect();
+        areas.sort_by_key(|(key, _)| *key);
+        let plate = area(node("led-plate-area"), view);
+        let plate_angle = long_side(&plate.contours[0]);
+        let mut strip_line = vec![];
+        collect_contours(node("led-strip"), view, &mut strip_line);
+        let strip = strip_points(&strip_line.concat(), 3.0);
+        let mut strip_leds: Vec<f32> = led_points("strip")
+            .iter()
+            .map(|q| {
+                let d = |sp: &StripPoint| (sp.at[0] - q[0]).hypot(sp.at[1] - q[1]);
+                strip
+                    .iter()
+                    .min_by(|a, b| d(a).total_cmp(&d(b)))
+                    .expect("strip has points")
+                    .t
+            })
+            .collect();
+        strip_leds.sort_by(f32::total_cmp);
+        let plate_leds = led_points("plate");
+        Art {
+            full,
+            pad,
+            src,
+            view,
+            pad_view,
+            areas,
+            plate,
+            plate_angle,
+            strip,
+            strip_leds,
+            plate_leds,
+            labels,
+        }
     })
 }
 
@@ -167,9 +258,9 @@ fn without_groups(svg: &str, ids: &[&str]) -> String {
     s
 }
 
-fn area(node: &usvg::Node) -> Area {
+fn area(node: &usvg::Node, view: [f32; 4]) -> Area {
     let mut contours = vec![];
-    collect_contours(node, &mut contours);
+    collect_contours(node, view, &mut contours);
     for c in &mut contours {
         tidy(c);
     }
@@ -188,12 +279,12 @@ fn area(node: &usvg::Node) -> Area {
 }
 
 /// Flattened outlines of every path under `node`, in drawing coordinates.
-fn collect_contours(node: &usvg::Node, out: &mut Vec<Vec<[f32; 2]>>) {
+fn collect_contours(node: &usvg::Node, view: [f32; 4], out: &mut Vec<Vec<[f32; 2]>>) {
     use usvg::tiny_skia_path::PathSegment;
     match node {
         usvg::Node::Group(g) => {
             for child in g.children() {
-                collect_contours(child, out);
+                collect_contours(child, view, out);
             }
         }
         usvg::Node::Path(path) => {
@@ -204,7 +295,7 @@ fn collect_contours(node: &usvg::Node, out: &mut Vec<Vec<[f32; 2]>>) {
                 let mut q = p;
                 ts.map_point(&mut q);
                 // Tree coordinates start at the viewBox origin.
-                cur.push([q.x + VIEW[0], q.y + VIEW[1]]);
+                cur.push([q.x + view[0], q.y + view[1]]);
             };
             for seg in path.data().segments() {
                 match seg {
@@ -341,12 +432,63 @@ fn inside_poly(pts: &[[f32; 2]], (x, y): (f32, f32)) -> bool {
     c
 }
 
+/// Angle of a polygon's longest side, folded into -90°..90°.
+fn long_side(c: &[[f32; 2]]) -> f32 {
+    let (a, b) = (0..c.len())
+        .map(|i| (c[i], c[(i + 1) % c.len()]))
+        .max_by(|(a, b), (p, q)| {
+            let len = |a: [f32; 2], b: [f32; 2]| (b[0] - a[0]).hypot(b[1] - a[1]);
+            len(*a, *b).total_cmp(&len(*p, *q))
+        })
+        .expect("polygon has sides");
+    let mut ang = (b[1] - a[1]).atan2(b[0] - a[0]);
+    if ang > std::f32::consts::FRAC_PI_2 {
+        ang -= std::f32::consts::PI;
+    } else if ang < -std::f32::consts::FRAC_PI_2 {
+        ang += std::f32::consts::PI;
+    }
+    ang
+}
+
+/// The polyline resampled every `step` units, with normals and arc position.
+fn strip_points(line: &[[f32; 2]], step: f32) -> Vec<StripPoint> {
+    let mut dist = vec![0.0];
+    for w in line.windows(2) {
+        dist.push(dist.last().unwrap() + (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]));
+    }
+    let total = *dist.last().unwrap_or(&0.0);
+    if total <= 0.0 {
+        return vec![];
+    }
+    let n = (total / step).ceil() as usize;
+    let at = |d: f32| -> [f32; 2] {
+        let i = dist.partition_point(|&x| x <= d).clamp(1, line.len() - 1);
+        let (a, b) = (line[i - 1], line[i]);
+        let span = (dist[i] - dist[i - 1]).max(1e-6);
+        let t = ((d - dist[i - 1]) / span).clamp(0.0, 1.0);
+        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+    };
+    (0..=n)
+        .map(|k| {
+            let d = total * k as f32 / n as f32;
+            let (p, q) = (at((d - 1.0).max(0.0)), at((d + 1.0).min(total)));
+            let len = (q[0] - p[0]).hypot(q[1] - p[1]).max(1e-6);
+            StripPoint {
+                at: at(d),
+                normal: [-(q[1] - p[1]) / len, (q[0] - p[0]) / len],
+                t: d / total,
+            }
+        })
+        .collect()
+}
+
 // --- rasters -------------------------------------------------------------------
 
 /// The drawing rendered for one on-screen size.
 #[derive(Clone)]
 struct Raster {
     px: [usize; 2],
+    tiles: bool,
     base: TextureHandle,
     /// Stick caps with their rest rectangles in drawing coordinates.
     caps: [(TextureHandle, [f32; 4]); 2],
@@ -358,50 +500,64 @@ fn render(tree: &usvg::Tree, px: [usize; 2], ts: tiny_skia::Transform) -> ColorI
     ColorImage::from_rgba_premultiplied(px, pixmap.data())
 }
 
-fn render_node(node: &usvg::Node, px: [usize; 2], scale: f32) -> ColorImage {
+fn render_node(node: &usvg::Node, px: [usize; 2], scale: f32, view: [f32; 4]) -> ColorImage {
     let mut pixmap = tiny_skia::Pixmap::new(px[0] as u32, px[1] as u32).expect("non-empty size");
     // render_node skips the ancestors' transforms, including the viewBox
     // shift that the node's bounding box already has.
-    let ts = tiny_skia::Transform::from_scale(scale, scale).pre_translate(-VIEW[0], -VIEW[1]);
+    let ts = tiny_skia::Transform::from_scale(scale, scale).pre_translate(-view[0], -view[1]);
     resvg::render_node(node, ts, &mut pixmap.as_mut());
     ColorImage::from_rgba_premultiplied(px, pixmap.data())
 }
 
 /// Rasters for the given pixel size, cached across frames. A few sizes are
 /// kept, since several screens show the pad at different sizes.
-fn raster(ctx: &egui::Context, px: [usize; 2]) -> Raster {
+fn raster(ctx: &egui::Context, px: [usize; 2], tiles: bool) -> Raster {
     let id = Id::new("apex5-pad-rasters");
     if let Some(r) = ctx.data(|d| {
         d.get_temp::<Vec<Raster>>(id)
-            .and_then(|v| v.iter().find(|r| r.px == px).cloned())
+            .and_then(|v| v.iter().find(|r| r.px == px && r.tiles == tiles).cloned())
     }) {
         return r;
     }
     let a = art();
-    let scale = px[0] as f32 / VIEW[2];
+    let (tree, view) = if tiles {
+        (&a.full, a.view)
+    } else {
+        (&a.pad, a.pad_view)
+    };
+    let scale = px[0] as f32 / view[2];
     let base = ctx.load_texture(
         "apex5-pad",
         render(
-            &a.base,
+            tree,
             px,
-            tiny_skia::Transform::from_scale(scale, px[1] as f32 / VIEW[3]),
+            tiny_skia::Transform::from_scale(scale, px[1] as f32 / view[3]),
         ),
         TextureOptions::LINEAR,
     );
     let caps = CAPS.map(|(_, id)| {
-        let node = a.full.node_by_id(id).expect("cap group exists");
+        let node = a.src.node_by_id(id).expect("cap group exists");
         let bb = node.abs_layer_bounding_box().expect("cap has a size");
         let size = [
             (bb.width() * scale).ceil() as usize + 1,
             (bb.height() * scale).ceil() as usize + 1,
         ];
-        let tex = ctx.load_texture(id, render_node(node, size, scale), TextureOptions::LINEAR);
-        let x = bb.x() + VIEW[0];
-        let y = bb.y() + VIEW[1];
+        let tex = ctx.load_texture(
+            id,
+            render_node(node, size, scale, a.view),
+            TextureOptions::LINEAR,
+        );
+        let x = bb.x() + a.view[0];
+        let y = bb.y() + a.view[1];
         let rect = [x, y, x + size[0] as f32 / scale, y + size[1] as f32 / scale];
         (tex, rect)
     });
-    let r = Raster { px, base, caps };
+    let r = Raster {
+        px,
+        tiles,
+        base,
+        caps,
+    };
     ctx.data_mut(|d| {
         let v = d.get_temp_mut_or_default::<Vec<Raster>>(id);
         v.insert(0, r.clone());
@@ -412,16 +568,18 @@ fn raster(ctx: &egui::Context, px: [usize; 2]) -> Raster {
 
 // --- painting --------------------------------------------------------------------
 
+/// Drawing coordinates to screen: `o` is where the view's corner `v` lands.
 struct Xf {
     o: Pos2,
+    v: [f32; 2],
     s: f32,
 }
 
 impl Xf {
     fn p(&self, x: f32, y: f32) -> Pos2 {
         pos2(
-            self.o.x + (x - VIEW[0]) * self.s,
-            self.o.y + (y - VIEW[1]) * self.s,
+            self.o.x + (x - self.v[0]) * self.s,
+            self.o.y + (y - self.v[1]) * self.s,
         )
     }
     fn q(&self, q: [f32; 2]) -> Pos2 {
@@ -435,8 +593,8 @@ impl Xf {
     }
     fn inv(&self, p: Pos2) -> (f32, f32) {
         (
-            (p.x - self.o.x) / self.s + VIEW[0],
-            (p.y - self.o.y) / self.s + VIEW[1],
+            (p.x - self.o.x) / self.s + self.v[0],
+            (p.y - self.o.y) / self.s + self.v[1],
         )
     }
 }
@@ -483,6 +641,10 @@ fn overlay(p: &egui::Painter, xf: &Xf, a: &Area, st: KeyState, level: f32, shift
     } else {
         fill
     };
+    fill_area(p, xf, a, fill, stroke, shift);
+}
+
+fn fill_area(p: &egui::Painter, xf: &Xf, a: &Area, fill: Color32, stroke: Stroke, shift: Vec2) {
     for (c, tris) in a.contours.iter().zip(&a.tris) {
         let pts: Vec<Pos2> = c.iter().map(|q| xf.q(*q) + shift).collect();
         if fill != Color32::TRANSPARENT {
@@ -520,106 +682,116 @@ fn draw_screen(p: &egui::Painter, xf: &Xf, text: &str) {
     );
 }
 
+/// A light colour as hue at full strength plus how strong it is (0..1), so
+/// dark LEDs fade out instead of painting the drawing black.
+fn light(c: [f32; 3], alpha: f32) -> Color32 {
+    let m = c[0].max(c[1]).max(c[2]);
+    if m < 1.0 {
+        return Color32::TRANSPARENT;
+    }
+    let k = 255.0 / m;
+    Color32::from_rgba_unmultiplied(
+        (c[0] * k) as u8,
+        (c[1] * k) as u8,
+        (c[2] * k) as u8,
+        (alpha * m / 255.0 * 255.0).min(255.0) as u8,
+    )
+}
+
+/// The strip's light guide blends the colours of its LEDs, from the left
+/// grip to the right one. The FLYDIGI plate glows with its own two LEDs.
 fn draw_leds(p: &egui::Painter, xf: &Xf, leds: Option<&[[u8; 3]]>, brightness: f32) {
-    let colour = |i: usize| -> Color32 {
-        match leds.and_then(|l| l.get(i)) {
-            Some(c) => {
-                let k = 0.3 + 0.7 * brightness.clamp(0.0, 1.0);
-                Color32::from_rgb(
-                    (c[0] as f32 * k) as u8,
-                    (c[1] as f32 * k) as u8,
-                    (c[2] as f32 * k) as u8,
-                )
-            }
-            None => Color32::from_rgb(30, 34, 40),
-        }
+    let Some(leds) = leds.filter(|l| !l.is_empty()) else {
+        return;
     };
-    let lit = |c: Color32| c.r().max(c.g()).max(c.b()) > 40;
-    // Unlit, the strips are drawn like the rest of the line art.
-    let idle = Color32::from_rgb(157, 183, 220);
-    for strip in [0..6usize, 6..12] {
-        for i in strip.clone() {
-            if i + 1 < strip.end {
-                let c = lerp_colour(colour(i), colour(i + 1), 0.5);
-                let seg = [xf.q(LEDS[i]), xf.q(LEDS[i + 1])];
-                if lit(c) {
-                    p.line_segment(seg, Stroke::new(xf.v(22.0), c.gamma_multiply(0.09)));
-                    p.line_segment(seg, Stroke::new(xf.v(5.0), c.gamma_multiply(0.75)));
-                } else {
-                    p.line_segment(seg, Stroke::new(xf.v(0.9), idle.gamma_multiply(0.3)));
-                }
+    let a = art();
+    let k = 0.3 + 0.7 * brightness.clamp(0.0, 1.0);
+    let rgb = |c: [u8; 3]| [c[0] as f32 * k, c[1] as f32 * k, c[2] as f32 * k];
+    let slot = |i: usize| rgb(leds.get(i).copied().unwrap_or_default());
+    let at = &a.strip_leds;
+    let colour_at = |t: f32| -> [f32; 3] {
+        let i = at.partition_point(|&x| x < t);
+        if i == 0 {
+            return slot(STRIP_SLOTS[0]);
+        }
+        if i == at.len() {
+            return slot(STRIP_SLOTS[at.len() - 1]);
+        }
+        let f = (t - at[i - 1]) / (at[i] - at[i - 1]).max(1e-6);
+        let (c0, c1) = (slot(STRIP_SLOTS[i - 1]), slot(STRIP_SLOTS[i]));
+        [0, 1, 2].map(|j| c0[j] + (c1[j] - c0[j]) * f)
+    };
+    // The strip fades out at its ends, as on the pad.
+    let fade = |t: f32| (t.min(1.0 - t) / 0.06).clamp(0.0, 1.0);
+
+    // A soft glow: each point has a transparent edge on either side.
+    let mut glow = Mesh::default();
+    let mut core = Mesh::default();
+    for (i, sp) in a.strip.iter().enumerate() {
+        let c = colour_at(sp.t);
+        let f = fade(sp.t);
+        let at = xf.q(sp.at);
+        let nrm = vec2(sp.normal[0], sp.normal[1]);
+        let edge = light(c, 0.0);
+        let (w, cw) = (xf.v(11.0), xf.v(1.6));
+        glow.colored_vertex(at - nrm * w, edge);
+        glow.colored_vertex(at, light(c, 0.45 * f));
+        glow.colored_vertex(at + nrm * w, edge);
+        let hot = light(c, f);
+        let hot = lerp_colour(
+            hot,
+            Color32::WHITE.gamma_multiply(hot.a() as f32 / 255.0),
+            0.3,
+        );
+        core.colored_vertex(at - nrm * cw, hot);
+        core.colored_vertex(at + nrm * cw, hot);
+        if i > 0 {
+            let (g, h) = (3 * i as u32, 2 * i as u32);
+            for j in 0..2 {
+                let (a0, a1, b0, b1) = (g - 3 + j, g - 2 + j, g + j, g + 1 + j);
+                glow.indices.extend([a0, a1, b0, a1, b1, b0]);
             }
+            core.indices.extend([h - 2, h - 1, h, h - 1, h + 1, h]);
         }
     }
-    for (i, q) in LEDS.iter().enumerate() {
-        let c = colour(i);
-        let at = xf.q(*q);
-        if lit(c) {
-            p.circle_filled(at, xf.v(14.0), c.gamma_multiply(0.13));
-            p.circle_filled(at, xf.v(5.0), lerp_colour(c, Color32::WHITE, 0.35));
-        } else {
-            p.circle_filled(at, xf.v(2.2), idle.gamma_multiply(0.45));
-        }
+    p.add(Shape::mesh(glow));
+    p.add(Shape::mesh(core));
+
+    let plate = PLATE_SLOTS
+        .iter()
+        .map(|&i| slot(i))
+        .fold([0.0; 3], |m, c| [m[0] + c[0], m[1] + c[1], m[2] + c[2]])
+        .map(|v| v / PLATE_SLOTS.len() as f32);
+    let fill = light(plate, 0.22);
+    if fill == Color32::TRANSPARENT {
+        return;
     }
-}
-
-fn back_key_rect(id: u8) -> [f32; 4] {
-    let x = 247.0 + (id - 18) as f32 * 84.0;
-    [x, 500.0, x + 70.0, 528.0]
-}
-
-fn draw_back_key(p: &egui::Painter, xf: &Xf, id: u8, label: &str, st: KeyState) {
-    let [x0, y0, x1, y1] = back_key_rect(id);
-    let rect = xf.rect(x0, y0, x1, y1);
-    let a = accent();
-    let base = Color32::from_rgb(29, 33, 40);
-    let fill = if st.pressed {
-        a
-    } else if st.selected {
-        lerp_colour(base, a, 0.28)
-    } else if st.hovered {
-        lerp_colour(base, Color32::WHITE, 0.08)
-    } else {
-        base
-    };
-    let stroke = if st.selected || st.pressed {
-        Stroke::new(2.0, a)
-    } else if st.hovered {
-        Stroke::new(1.5, a.gamma_multiply(0.7))
-    } else {
-        Stroke::new(1.0, Color32::from_rgb(70, 78, 92))
-    };
-    let text = if st.pressed {
-        on_accent()
-    } else if st.lit() {
-        Color32::WHITE
-    } else {
-        theme::DIM
-    };
-    p.rect(
-        rect,
-        CornerRadius::same(xf.v(14.0) as u8),
+    fill_area(
+        p,
+        xf,
+        &a.plate,
         fill,
-        stroke,
-        StrokeKind::Inside,
+        Stroke::new(xf.v(1.2), light(plate, 0.6)),
+        Vec2::ZERO,
     );
-    p.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        theme::bold(xf.v(15.0).max(8.0)),
-        text,
-    );
-    if st.marked && !st.pressed {
-        mark(p, xf, xf.p(x1 - 3.0, y0 + 3.0));
+    // Each LED is brightest right above it.
+    for (q, &i) in a.plate_leds.iter().zip(&PLATE_SLOTS) {
+        for (r, alpha) in [(16.0, 0.08), (9.0, 0.12), (4.0, 0.18)] {
+            p.circle_filled(xf.q(*q), xf.v(r), light(slot(i), alpha));
+        }
     }
+    let galley = p.layout_no_wrap(
+        "FLYDIGI".into(),
+        theme::bold(xf.v(15.0).max(6.0)),
+        lerp_colour(light(plate, 1.0), Color32::WHITE, 0.25),
+    );
+    let half = galley.size() / 2.0;
+    let rot = egui::emath::Rot2::from_angle(a.plate_angle);
+    let pos = xf.q(a.plate.centre()) - rot * half;
+    p.add(TextShape::new(pos, galley, Color32::WHITE).with_angle(a.plate_angle));
 }
 
 fn hit(id: u8, q: (f32, f32), shift: (f32, f32)) -> bool {
-    if (18..=23).contains(&id) {
-        let [x0, y0, x1, y1] = back_key_rect(id);
-        return q.0 >= x0 - 2.0 && q.0 <= x1 + 2.0 && q.1 >= y0 - 2.0 && q.1 <= y1 + 2.0;
-    }
     art()
         .areas
         .iter()
@@ -628,7 +800,8 @@ fn hit(id: u8, q: (f32, f32), shift: (f32, f32)) -> bool {
 }
 
 pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
-    let h = if o.show_back { H_BACK } else { VIEW[3] };
+    let a = art();
+    let view = if o.show_tiles { a.view } else { a.pad_view };
     let sense = if o.interactive {
         Sense::click()
     } else {
@@ -637,18 +810,16 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let ppp = ui.ctx().pixels_per_point();
     // Whole physical pixels for the drawing, so the raster maps 1:1.
-    let px_w = ((rect.width() / VIEW[2]).min(rect.height() / h) * VIEW[2] * ppp).floor();
+    let px_w = ((rect.width() / view[2]).min(rect.height() / view[3]) * view[2] * ppp).floor();
     let px = [
         px_w.max(1.0) as usize,
-        (px_w * VIEW[3] / VIEW[2]).round().max(1.0) as usize,
+        (px_w * view[3] / view[2]).round().max(1.0) as usize,
     ];
-    let s = px[0] as f32 / ppp / VIEW[2];
-    let origin = pos2(
-        rect.center().x - VIEW[2] * s / 2.0,
-        rect.center().y - h * s / 2.0,
-    );
+    let s = px[0] as f32 / ppp / view[2];
+    let origin = rect.center() - vec2(view[2], view[3]) * s / 2.0;
     let xf = Xf {
         o: (origin.to_vec2() * ppp).round().to_pos2() / ppp,
+        v: [view[0], view[1]],
         s,
     };
 
@@ -661,6 +832,7 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
         };
         (x * STICK_TRAVEL, -y * STICK_TRAVEL)
     };
+    let shown = |id: u8| o.show_tiles || !is_tile(id);
 
     let mut hovered = None;
     if o.interactive
@@ -670,7 +842,7 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
         hovered = HIT_ORDER
             .iter()
             .copied()
-            .filter(|id| o.show_back || !(18..=23).contains(id))
+            .filter(|id| shown(*id))
             .find(|id| hit(*id, q, stick_shift(*id)));
         if hovered.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -686,11 +858,11 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
         marked: o.marked.contains(&id),
     };
 
-    let ras = raster(ui.ctx(), px);
+    let ras = raster(ui.ctx(), px, o.show_tiles);
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     p.image(
         ras.base.id(),
-        xf.rect(VIEW[0], VIEW[1], VIEW[0] + VIEW[2], VIEW[1] + VIEW[3]),
+        xf.rect(view[0], view[1], view[0] + view[2], view[1] + view[3]),
         uv,
         Color32::WHITE,
     );
@@ -700,9 +872,8 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
     }
 
     let (lt, rt) = o.triggers.unwrap_or((0.0, 0.0));
-    let a = art();
     for (id, area) in &a.areas {
-        if matches!(id, 14 | 15) {
+        if matches!(id, 14 | 15) || !shown(*id) {
             continue;
         }
         let level = match id {
@@ -711,6 +882,25 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
             _ => 0.0,
         };
         overlay(&p, &xf, area, state(*id), level, Vec2::ZERO);
+    }
+    if o.show_tiles {
+        for (id, text, at) in &a.labels {
+            let st = state(*id);
+            let colour = if st.pressed {
+                on_accent()
+            } else if st.lit() {
+                Color32::WHITE
+            } else {
+                INK.gamma_multiply(0.75)
+            };
+            p.text(
+                xf.q(*at),
+                egui::Align2::CENTER_CENTER,
+                text,
+                theme::bold(xf.v(17.0).max(8.0)),
+                colour,
+            );
+        }
     }
 
     // Stick caps follow the sticks; the drawing's line layer is 42% opaque.
@@ -727,10 +917,7 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
         if let Some((_, area)) = a.areas.iter().find(|(k, _)| k == id) {
             overlay(&p, &xf, area, st, 0.0, shift);
             if st.lit() {
-                let c = xf.p(
-                    (area.min[0] + area.max[0]) / 2.0,
-                    (area.min[1] + area.max[1]) / 2.0,
-                ) + shift;
+                let c = xf.q(area.centre()) + shift;
                 let text = if *id == 14 { "L3" } else { "R3" };
                 let colour = if st.pressed {
                     on_accent()
@@ -750,22 +937,9 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
 
     for (id, area) in &a.areas {
         let st = state(*id);
-        if st.marked && !st.pressed {
+        if st.marked && !st.pressed && shown(*id) {
             let (dx, dy) = stick_shift(*id);
             mark(&p, &xf, xf.q(area.corner()) + vec2(xf.v(dx), xf.v(dy)));
-        }
-    }
-
-    if o.show_back {
-        p.text(
-            xf.p(MID, 484.0),
-            egui::Align2::CENTER_CENTER,
-            "ЗАДНИЕ КНОПКИ",
-            FontId::new(xf.v(13.0).max(9.0), egui::FontFamily::Name("medium".into())),
-            theme::FAINT,
-        );
-        for (id, label) in BACK_KEYS {
-            draw_back_key(&p, &xf, id, label, state(id));
         }
     }
 
@@ -779,11 +953,13 @@ mod tests {
     #[test]
     fn drawing_has_every_key() {
         let a = art();
-        assert_eq!(a.areas.len(), FRONT_KEYS.len());
-        for (id, area) in &a.areas {
-            assert!(!area.contours.is_empty(), "key {id} has no outline");
+        assert_eq!(a.areas.len(), KEYS.len());
+        let plate = ("plate".to_owned(), &a.plate);
+        let areas = a.areas.iter().map(|(id, ar)| (format!("key {id}"), ar));
+        for (name, area) in areas.chain([plate]) {
+            assert!(!area.contours.is_empty(), "{name} has no outline");
             for (c, t) in area.contours.iter().zip(&area.tris) {
-                assert_eq!(t.len(), (c.len() - 2) * 3, "key {id} did not triangulate");
+                assert_eq!(t.len(), (c.len() - 2) * 3, "{name} did not triangulate");
             }
         }
     }
@@ -791,19 +967,88 @@ mod tests {
     #[test]
     fn key_areas_sit_where_the_drawing_has_them() {
         let a = art();
-        let centre = |id: u8| {
-            let (_, ar) = a.areas.iter().find(|(k, _)| *k == id).unwrap();
-            [(ar.min[0] + ar.max[0]) / 2.0, (ar.min[1] + ar.max[1]) / 2.0]
-        };
+        let centre = |id: u8| a.areas.iter().find(|(k, _)| *k == id).unwrap().1.centre();
         let near =
             |p: [f32; 2], q: [f32; 2]| (p[0] - q[0]).abs() < 1.0 && (p[1] - q[1]).abs() < 1.0;
         assert!(near(centre(4), [655.67, 217.0]), "A at {:?}", centre(4));
         assert!(near(centre(14), [331.37, 171.8]), "LS at {:?}", centre(14));
-        assert!(hit(10, (360.0, 55.0), (0.0, 0.0)), "LB");
         assert!(hit(0, (408.8, 245.0), (0.0, 0.0)), "D-pad up");
         assert!(
             !hit(0, (408.8, 274.0 + 20.0), (0.0, 0.0)),
             "D-pad up vs down"
+        );
+        // Tiles: shoulders above the pad, back buttons below it, mirrored.
+        let mid = a.pad_view[0] + a.pad_view[2] / 2.0;
+        for (l, r) in [(12, 13), (10, 11), (22, 23), (19, 18), (21, 20)] {
+            let (cl, cr) = (centre(l), centre(r));
+            assert!(near([2.0 * mid - cl[0], cl[1]], cr), "{l} vs {r}");
+        }
+        assert!(centre(12)[1] < a.pad_view[1] + 40.0, "LT is up top");
+        assert!(centre(20)[1] > a.pad_view[1] + 300.0, "M3 is below");
+    }
+
+    #[test]
+    fn every_tile_has_its_label_inside() {
+        let a = art();
+        let ids: Vec<u8> = a.labels.iter().map(|(id, ..)| *id).collect();
+        assert_eq!(ids.len(), 10);
+        for (id, text, at) in &a.labels {
+            assert!(is_tile(*id), "{text} labels a tile");
+            assert!(
+                hit(*id, (at[0], at[1]), (0.0, 0.0)),
+                "{text} sits in its tile"
+            );
+        }
+    }
+
+    #[test]
+    fn light_strip_runs_along_the_bottom() {
+        let a = art();
+        let (first, last) = (a.strip.first().unwrap(), a.strip.last().unwrap());
+        assert!(a.strip.len() > 100);
+        assert!(first.at[0] < 300.0 && last.at[0] > 680.0);
+        assert!((first.at[1] - last.at[1]).abs() < 1.0, "symmetric");
+        let low = a.strip[a.strip.len() / 2];
+        assert!(
+            low.at[1] > 355.0 && low.at[1] < 370.0,
+            "centre at {:?}",
+            low.at
+        );
+        assert_eq!(a.strip_leds.len(), STRIP_SLOTS.len());
+        assert!(
+            a.strip_leds.windows(2).all(|w| w[0] < w[1]),
+            "strip LEDs apart"
+        );
+        assert_eq!(a.plate_leds.len(), PLATE_SLOTS.len());
+        for q in &a.plate_leds {
+            assert!(a.plate.contains((q[0], q[1])), "plate LED at {q:?}");
+        }
+        // Lighting effects place the LEDs by these marks.
+        let mut xs = [0.0; 12];
+        for (&slot, &t) in STRIP_SLOTS.iter().zip(&a.strip_leds) {
+            let q = a.strip.iter().find(|sp| sp.t >= t).unwrap().at;
+            xs[slot] = q[0];
+        }
+        for (&slot, q) in PLATE_SLOTS.iter().zip(&a.plate_leds) {
+            xs[slot] = q[0];
+        }
+        let (lo, hi) = (
+            xs.iter().copied().fold(f32::MAX, f32::min),
+            xs.iter().copied().fold(f32::MIN, f32::max),
+        );
+        for (slot, x) in xs.iter().enumerate() {
+            let want = (x - lo) / (hi - lo);
+            let have = apex5::lighting::LED_X[slot];
+            assert!(
+                (want - have).abs() < 0.01,
+                "LED_X[{slot}] is {have}, the drawing says {want:.3}"
+            );
+        }
+        let c = a.plate.centre();
+        assert!(a.plate.contains((c[0], c[1])), "plate");
+        assert!(
+            c[0] < 320.0 && c[1] > 250.0,
+            "plate on the left grip at {c:?}"
         );
     }
 }

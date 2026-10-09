@@ -101,7 +101,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     pressed: pressed.as_slice(),
                     sticks: Some(*sticks),
                     triggers: Some((s.lt as f32 / 255.0, s.rt as f32 / 255.0)),
-                    show_back: true,
+                    show_tiles: true,
                     screen: Some(&screen),
                     ..Default::default()
                 },
