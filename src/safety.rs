@@ -4,12 +4,14 @@
 //! Never allowed: rumble (0x12), rumble-to-trigger bind (82), vibrating
 //! trigger modes (81 mode 2/5), firmware/upgrade mode (31), factory reset
 //! (253), reset-all-profiles (175), mode switch (27), restart (29), report
-//! rate (20), test floods (242/245), the HID picture family (208-211), and
-//! the Switch-bank commit (171).
+//! rate (20), test floods (242/245), the HID picture family (208-211), the
+//! Switch-bank commit (171), third-party capture (28), the factory/test range
+//! (240-253) and the device-type rewrite (254).
 
 use anyhow::{Result, bail};
 
 /// Sub-ids of command 19 the app may toggle (2 = Xbox home, 3/10 unsupported).
+/// 4 is Space Station's "Turbo Function".
 pub const ALLOWED_SUB19: [u8; 7] = [1, 4, 5, 6, 7, 8, 9];
 
 /// Force-trigger modes that only resist: Normal, Race, Recoil(UI "Sniper"), Lock.
@@ -32,7 +34,8 @@ pub fn check(pkt: &[u8; 32]) -> Result<()> {
         19 => bail!("blocked: setting sub-id {} is not allowed", p[0]),
         21 if (1..=7).contains(&p[0]) => Ok(()),
         22 if (14..=20).contains(&p[0]) => Ok(()),
-        23 if p[0] <= 60 => Ok(()),
+        // sleep minutes: Space Station's picker offers 0 (never), 1, 5, 15, 60, 180
+        23 if p[0] <= 60 || p[0] == 180 => Ok(()),
         21..=23 => bail!("blocked: setting {cmd} value {} out of range", p[0]),
         24 => Ok(()), // nickname
         // live force trigger: one side at a time, resistance modes only
@@ -47,6 +50,10 @@ pub fn check(pkt: &[u8; 32]) -> Result<()> {
         // lighting: read, write
         167..=169 => Ok(()),
         0x12 | 82 => bail!("blocked: vibration command {cmd}"),
+        // Space Station sends 254 when its server says so, then restarts the
+        // pad; the model id lives in flash and both apps key off it.
+        254 => bail!("blocked: device-type rewrite (254) changes the pad's model id"),
+        240..=253 => bail!("blocked: factory/test command {cmd}"),
         _ => bail!("blocked: command {cmd} is not on the allow-list"),
     }
 }
@@ -72,11 +79,31 @@ mod tests {
 
     #[test]
     fn dangerous_commands_are_refused() {
-        for cmd in [20, 27, 29, 31, 171, 175, 208, 211, 242, 245, 253] {
+        for cmd in [
+            20, 27, 28, 29, 31, 171, 175, 208, 211, 240, 241, 242, 244, 245, 246, 247, 253, 254,
+        ] {
             assert!(check(&build(cmd, &[4], true)).is_err(), "cmd {cmd}");
         }
         assert!(check(&build(19, &[2, 1], true)).is_err());
         assert!(check(&build(17, &[0, 1, 0xFF, 0xFF, 0xFF], true)).is_err());
         assert!(check(&build(17, &[0xFF, 1, 0xFF, 0xFF, 0xFF], true)).is_ok());
+    }
+
+    #[test]
+    fn device_type_rewrite_is_refused_for_every_type() {
+        for t in [0, 128, 129, 133, 136, 255] {
+            let err = check(&build(254, &[t], true)).unwrap_err().to_string();
+            assert!(err.contains("device-type"), "{err}");
+        }
+    }
+
+    #[test]
+    fn sleep_allows_up_to_an_hour_or_exactly_three() {
+        for v in [0, 1, 5, 15, 60, 180] {
+            assert!(check(&build(23, &[v], true)).is_ok(), "sleep {v}");
+        }
+        for v in [61, 179, 181, 255] {
+            assert!(check(&build(23, &[v], true)).is_err(), "sleep {v}");
+        }
     }
 }

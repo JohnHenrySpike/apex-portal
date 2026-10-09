@@ -56,7 +56,6 @@ pub struct App {
     pub nickname: String,
     pub title: String,
     pub streaming: bool,
-    pub sleep_edit: Option<u8>,
     pub selected_key: u8,
     shots: Option<Shots>,
 }
@@ -84,7 +83,6 @@ impl App {
             nickname: String::new(),
             title: String::new(),
             streaming: false,
-            sleep_edit: None,
             selected_key: 4,
             shots: Shots::from_env(),
         }
@@ -162,7 +160,7 @@ impl App {
             }
             Event::Settings(s) => self.settings = Some(s),
             Event::Led(cfg) => {
-                let effect = Effect::from_id(cfg.mode()).unwrap_or(Effect::Wave);
+                let effect = cfg.effect();
                 let mut colours: Vec<Rgb> = vec![];
                 for l in 0..cfg.leds() {
                     let c = cfg.led(0, l);

@@ -369,7 +369,7 @@ Sources: flydigi/settings.py:188-210, docs/device-settings.md:158-162, :222-230.
 | 1 | quick-switch config ("Fast Swap Config": modifier + A/B/X/Y picks a profile) | yes | on | **HW write+readback verified** (docs/device-settings.md:232-237) |
 | 2 | Xbox home button | yes | on | **Do not expose.** SDK refuses it on NewXInput, there is no UI, and the effect is unmeasured (docs/device-settings.md:179-204; flydigi/settings.py:41-45) |
 | 3 | motion debounce | **no** | — | unsupported on k5; do not expose |
-| 4 | mapping switch | yes | on | no UI string anywhere; effect unknown. **Not** the third-party toggle (docs/device-settings.md:169; docs/findings-steam.md:159-160). openflydigi's GUI does expose it (gui/models/settings.py:50-51) |
+| 4 | mapping switch (Space Station: "Turbo Function", locale key `turbo_mapping_title`) | yes | on | enables per-button turbo; whether it also gates macros is unverified (docs/space-station.md §4.1). **Not** the third-party toggle (docs/device-settings.md:169; docs/findings-steam.md:159-160). openflydigi's GUI does expose it (gui/models/settings.py:50-51) |
 | 5 | joystick debounce | yes | on | turning it off **disables auto-calibration** (docs/device-settings.md:107-118) |
 | 6 | joystick auto-calibration | yes | on | grey it out while sub 5 is off (gui/models/settings.py:200-209). **This is the only stick "calibration" control in the project. No manual stick or trigger calibration command exists in the source** |
 | 7 | joystick rebound filter | yes | on | filters the reverse spike on release |
@@ -392,7 +392,7 @@ The "default seen" column is the HW reply 0xFB/0x7B/0x01/0x00 (tests/test_settin
 | **20** (0x14) | report (polling) rate | `1`=1000 Hz, `2`=500, `4`=250, `8`=125 | **Pad reads `0`**, which is not in the map and has an unknown meaning. **Never written on HW.** openflydigi hides it behind `--i-know`. The pad already polls at the 1 ms USB ceiling. **Do not write** (flydigi/settings.py:115-122, :249-259; docs/device-settings.md:69-73) |
 | **21** (0x15) | stick precision | **enum declaration index**, not bits: `1`=8-bit, `2`=10-bit, `3`=12-bit, `4`=9-bit, `5`=11-bit, `6`=14-bit, `7`=16-bit (`0`=None) | HW: 3 written, read back as 12-bit. Default 2 (10-bit) (flydigi/settings.py:94-98; docs/device-settings.md:94-105) |
 | **22** (0x16) | stick centre sensitivity | `14` Highest, `15` High, `16` Middle-high, `17` Middle, `18` Low-middle, `19` Low, `20` Lowest | HW: 16 written and read back. Default 17 (flydigi/settings.py:100-113) |
-| **23** (0x17) | sleep timer, minutes | `0` = never; openflydigi clamps to 0..60 (Flydigi's picker max; the byte holds more) | HW: 30, then 15, written and read back. Default 15 (flydigi/settings.py:89-92, :227-236) |
+| **23** (0x17) | sleep timer, minutes | `0` = never; Space Station 4.2.0.9 offers 1, 5, 15, 60, 180 and never (docs/space-station.md §4.1); openflydigi clamps to 0..60 | HW: 30, then 15, written and read back. Default 15 (flydigi/settings.py:89-92, :227-236) |
 | **29** (0x1D) | restart | `03 5A A5 1D 02 1F` (no argument) | **Never sent on HW.** The hidraw node vanishes and returns, so reopen it (flydigi/settings.py:262-270; docs/device-settings.md:20-24) |
 
 Notes on these numeric settings:

@@ -503,11 +503,7 @@ const FEATURES: [(u8, &str, &str); 5] = [
         "Фильтр отскока стика",
         "Гасит обратный выброс при резком отпускании стика",
     ),
-    (
-        4,
-        "Переключатель раскладки",
-        "Функция есть в прошивке, Flydigi её не описывает",
-    ),
+    (4, "Кнопка Turbo", "Разрешает турбо-режимы кнопок"),
 ];
 
 fn settings(app: &mut App, ui: &mut egui::Ui) {
@@ -571,27 +567,15 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
             "Автоотключение",
             "Через сколько минут бездействия геймпад засыпает",
             |ui| {
-                let mut v = app.sleep_edit.unwrap_or(s.sleep_minutes).min(60);
-                let r = ui.add(
-                    egui::Slider::new(&mut v, 0..=60)
-                        .suffix(" мин")
-                        .custom_formatter(|v, _| {
-                            if v == 0.0 {
-                                "никогда".into()
-                            } else {
-                                format!("{v}")
-                            }
-                        }),
-                );
-                if r.changed() {
-                    app.sleep_edit = Some(v);
+                // a value set elsewhere stays pickable alongside the presets
+                let custom = format!("{} мин", s.sleep_minutes);
+                let mut items = device::SLEEP.to_vec();
+                if !items.iter().any(|(v, _)| *v == s.sleep_minutes) {
+                    items.push((s.sleep_minutes, &custom));
                 }
-                if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    app.sleep_edit = None;
-                    if v != s.sleep_minutes {
-                        app.send(Cmd::SetNumber(23, v));
-                    }
-                }
+                combo(ui, "sleep", s.sleep_minutes, &items, |v| {
+                    app.send(Cmd::SetNumber(23, v))
+                });
             },
         );
     });

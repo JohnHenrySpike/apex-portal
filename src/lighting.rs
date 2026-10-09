@@ -18,6 +18,9 @@ const OFF_BRIGHTNESS: usize = 6;
 const OFF_LED_COUNT: usize = 7;
 const OFF_MODE: usize = 8;
 const OFF_FRAMES: usize = 20;
+// FLOW is 1 both in Space Station's `LedType` and in the ids older builds of
+// this app stored, so it is the one mode byte value that can be trusted.
+const LED_TYPE_FLOW: u8 = 1;
 // Byte 9 (grip sync, "lights react to vibration") is never written by this app.
 
 pub type Rgb = [u8; 3];
@@ -76,22 +79,17 @@ impl Effect {
         Effect::StaticMulti,
         Effect::Off,
     ];
-    /// Space Station's effect id, stored in the mode byte for coherence.
-    fn id(self) -> u8 {
+    /// Space Station's `LedType` for the mode byte (FLOW 1, BREATH 2,
+    /// GRADIENT 3, ON 5, Close 6), so its UI names the stored effect. Several
+    /// of our effects share GRADIENT; `LedConfig::effect` tells them apart.
+    fn led_type(self) -> u8 {
         match self {
-            Effect::Off => 0,
-            Effect::Flow => 1,
-            Effect::Rotation => 2,
-            Effect::Breath => 3,
-            Effect::Solid => 4,
-            Effect::StaticMulti => 5,
-            Effect::Rainbow => 6,
-            Effect::Wave => 7,
-            Effect::Flash => 8,
+            Effect::Flow => LED_TYPE_FLOW,
+            Effect::Breath => 2,
+            Effect::Solid | Effect::StaticMulti => 5,
+            Effect::Off => 6,
+            Effect::Rotation | Effect::Wave | Effect::Rainbow | Effect::Flash => 3,
         }
-    }
-    pub fn from_id(id: u8) -> Option<Effect> {
-        Self::ALL.into_iter().find(|e| e.id() == id)
     }
     pub fn uses_colours(self) -> bool {
         !matches!(self, Effect::Off | Effect::Rainbow)
@@ -184,6 +182,44 @@ impl LedConfig {
     pub fn mode(&self) -> u8 {
         self.blob[OFF_MODE]
     }
+    /// Which of our effects made the stored frames. The mode byte holds only
+    /// the coarser `LedType` (older builds stored their own ids there), so the
+    /// frames decide and the byte only separates Flow from look-alikes.
+    pub fn effect(&self) -> Effect {
+        let (leds, frames) = (self.leds(), self.frames());
+        let frame = |f: usize| -> Vec<Rgb> { (0..leds).map(|l| self.led(f, l)).collect() };
+        let dark = |f: usize| frame(f).iter().all(|c| *c == [0; 3]);
+        let uniform = |f: usize| frame(f).windows(2).all(|w| w[0] == w[1]);
+        let flow = self.mode() == LED_TYPE_FLOW;
+        if (0..frames).all(dark) {
+            return Effect::Off;
+        }
+        if (1..frames).all(|f| frame(f) == frame(0)) {
+            return if flow {
+                Effect::Flow
+            } else if uniform(0) {
+                Effect::Solid
+            } else {
+                Effect::StaticMulti
+            };
+        }
+        let mut rainbow = self.clone();
+        rainbow.apply(Effect::Rainbow, &[]);
+        if rainbow.blob[OFF_FRAMES..] == self.blob[OFF_FRAMES..] {
+            return Effect::Rainbow;
+        }
+        if (0..frames).all(uniform) {
+            return if !dark(0) && dark(1) {
+                Effect::Flash
+            } else {
+                Effect::Breath
+            };
+        }
+        if frame(0).iter().filter(|c| **c == [0; 3]).count() * 2 > leds {
+            return Effect::Rotation;
+        }
+        if flow { Effect::Flow } else { Effect::Wave }
+    }
     pub fn loop_range(&self) -> (usize, usize) {
         (
             self.blob[OFF_LOOP_START] as usize,
@@ -207,7 +243,7 @@ impl LedConfig {
         }
         self.blob[OFF_LOOP_START] = 0;
         self.blob[OFF_LOOP_END] = (frames - 1) as u8;
-        self.blob[OFF_MODE] = effect.id();
+        self.blob[OFF_MODE] = effect.led_type();
         self.blob[OFF_CLICK_FEEDBACK] = 0;
     }
 
@@ -260,5 +296,63 @@ impl LedConfig {
                 }
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blank() -> LedConfig {
+        let mut blob = vec![0xFF; OFF_FRAMES + 10 * 12 * 3];
+        blob[..10].copy_from_slice(&[0, 3, 0, 0, 9, 10, 100, 12, 1, 0]);
+        LedConfig { blob }
+    }
+
+    #[test]
+    fn every_effect_reads_back_from_its_frames() {
+        let palettes: [&[Rgb]; 3] = [
+            &[[0, 116, 255]],
+            &[[255, 0, 0], [0, 255, 0]],
+            &[[255, 0, 0], [0, 255, 0], [40, 40, 200]],
+        ];
+        for effect in Effect::ALL {
+            for cols in palettes {
+                let mut cfg = blank();
+                cfg.apply(effect, cols);
+                let want = match effect {
+                    // one colour has nothing to flow or spread
+                    Effect::StaticMulti if cols.len() == 1 => Effect::Solid,
+                    e => e,
+                };
+                assert_eq!(cfg.effect(), want, "{effect:?} with {} colours", cols.len());
+            }
+        }
+    }
+
+    #[test]
+    fn mode_byte_is_space_stations_led_type() {
+        for (effect, ty) in [
+            (Effect::Flow, 1),
+            (Effect::Breath, 2),
+            (Effect::Wave, 3),
+            (Effect::Rainbow, 3),
+            (Effect::Solid, 5),
+            (Effect::StaticMulti, 5),
+            (Effect::Off, 6),
+        ] {
+            let mut cfg = blank();
+            cfg.apply(effect, &[[255, 0, 0], [0, 0, 255]]);
+            assert_eq!(cfg.mode(), ty, "{effect:?}");
+        }
+    }
+
+    #[test]
+    fn factory_lighting_reads_as_an_animation() {
+        // the factory rainbow is stored as Default (7), not one of ours
+        let cfg = LedConfig {
+            blob: include_bytes!("../led_backup_original.bin").to_vec(),
+        };
+        assert!(cfg.effect().animated());
     }
 }

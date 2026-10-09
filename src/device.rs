@@ -156,6 +156,15 @@ pub const PRECISION: [(u8, &str); 7] = [
     (6, "14 бит"),
     (7, "16 бит"),
 ];
+/// Space Station's choices; `safety` refuses anything else above an hour.
+pub const SLEEP: [(u8, &str); 6] = [
+    (1, "1 мин"),
+    (5, "5 мин"),
+    (15, "15 мин"),
+    (60, "1 час"),
+    (180, "3 часа"),
+    (0, "Никогда"),
+];
 pub const SENSITIVITY: [(u8, &str); 7] = [
     (14, "Максимальная"),
     (15, "Высокая"),
