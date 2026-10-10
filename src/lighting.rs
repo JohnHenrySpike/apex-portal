@@ -10,7 +10,9 @@ pub const CMD_READ: u8 = 167;
 pub const CMD_WRITE_START: u8 = 168;
 pub const CMD_WRITE_PACK: u8 = 169;
 
-const OFF_CLICK_FEEDBACK: usize = 2; // latches the displayed frame on a k5; we keep it 0
+// "click feedback": Space Station offers it for the Apex 4 only; on an Apex 5
+// the LEDs do not react to presses with it (HW). We keep it 0.
+const OFF_CLICK_FEEDBACK: usize = 2;
 const OFF_LOOP_START: usize = 3;
 const OFF_LOOP_END: usize = 4;
 const OFF_CYCLE: usize = 5;
@@ -214,6 +216,9 @@ impl LedConfig {
     /// Whether the LEDs flare while the grip motors run (byte 9).
     pub fn grip_sync(&self) -> bool {
         self.blob[OFF_GRIP_SYNC] == 1
+    }
+    pub fn set_grip_sync(&mut self, on: bool) {
+        self.blob[OFF_GRIP_SYNC] = on as u8;
     }
     pub fn mode(&self) -> u8 {
         self.blob[OFF_MODE]
@@ -478,8 +483,13 @@ mod tests {
     #[test]
     fn factory_lighting_reads_as_an_animation() {
         // the factory rainbow is stored as Default (7), not one of ours
-        let cfg = LedConfig::factory(0);
+        let mut cfg = LedConfig::factory(0);
         assert!(cfg.effect().animated());
         assert_eq!(cfg.blob.len(), 380);
+        assert!(cfg.grip_sync(), "this pad came with the grip flash on");
+        let effect = cfg.effect();
+        cfg.set_grip_sync(false);
+        assert!(!cfg.grip_sync());
+        assert_eq!(cfg.effect(), effect, "the flash is not part of the effect");
     }
 }

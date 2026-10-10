@@ -289,6 +289,20 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
+    ui.add_space(12.0);
+    card(ui, |ui| {
+        let mut on = led.cfg.grip_sync();
+        if widgets::toggle_row(
+            ui,
+            "Вспышка при вибрации",
+            "Подсветка ярко вспыхивает, пока работают моторы рукояток. Саму вибрацию не включает.",
+            &mut on,
+        ) {
+            led.cfg.set_grip_sync(on);
+            led.dirty_since = Some(Instant::now());
+        }
+    });
+
     if changed {
         let (effect, colours) = (led.effect, led.colours.clone());
         led.cfg.apply(effect, &colours);
