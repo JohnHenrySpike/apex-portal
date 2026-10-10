@@ -724,7 +724,7 @@ vibration-related packet that is safe to emit is the explicit **stop** in row 1.
 | command | allowed form |
 |---|---|
 | 1, 2, 3, 4, 16 | reads |
-| 17 | only the raw_data flag, others `0xFF`; optionally third_party |
+| 17 | one flag at a time, others `0xFF`: raw_data or third_party (Apex 5 Control: `src/safety.rs`, HW) |
 | 19 | subs 1, 4, 5, 6, 7, 8, 9 |
 | 21, 22, 23 | numeric settings |
 | 24 | nickname |

@@ -24,6 +24,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.add(egui::Spinner::new().color(accent()));
         return;
     }
+    if let Some(by) = app
+        .flags
+        .as_ref()
+        .map(|f| &f.control_by)
+        .filter(|b| !b.is_empty())
+    {
+        card(ui, |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "Геймпад захвачен программой {by}: пока она его держит, профиль не действует, \
+                     а обычный ввод геймпада выключен."
+                ))
+                .color(WARN),
+            );
+        });
+        ui.add_space(12.0);
+    }
 
     // Slot picker and title.
     card(ui, |ui| {

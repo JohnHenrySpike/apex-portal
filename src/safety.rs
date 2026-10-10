@@ -24,10 +24,13 @@ pub fn check(pkt: &[u8; 32]) -> Result<()> {
     match cmd {
         // reads: info, nickname, settings status, uid, transport flags
         1 | 2 | 3 | 4 | 16 => Ok(()),
-        // transport flags: only the raw-data stream flag may change
+        // transport flags: one at a time, the raw-data stream (p[1]) or
+        // letting third-party apps take the pad over (p[4]); the taking
+        // over itself (28) stays blocked
         17 => {
-            if p[0] != 0xFF || p[2] != 0xFF || p[3] != 0xFF || p[4] != 0xFF || p[1] > 1 {
-                bail!("blocked: command 17 may only toggle the input stream");
+            let one = (p[1] <= 1 && p[4] == 0xFF) || (p[1] == 0xFF && p[4] <= 1);
+            if p[0] != 0xFF || p[2] != 0xFF || p[3] != 0xFF || !one {
+                bail!("blocked: command 17 may only toggle the stream or third-party control");
             }
             Ok(())
         }
@@ -109,6 +112,24 @@ mod tests {
             let err = check(&build(254, &[t], true)).unwrap_err().to_string();
             assert!(err.contains("device-type"), "{err}");
         }
+    }
+
+    #[test]
+    fn transport_flags_change_one_at_a_time() {
+        let flags = |p: [u8; 5]| check(&build(17, &p, true));
+        assert!(flags([0xFF, 1, 0xFF, 0xFF, 0xFF]).is_ok(), "stream on");
+        assert!(flags([0xFF, 0, 0xFF, 0xFF, 0xFF]).is_ok(), "stream off");
+        assert!(flags([0xFF, 0xFF, 0xFF, 0xFF, 1]).is_ok(), "third party on");
+        assert!(
+            flags([0xFF, 0xFF, 0xFF, 0xFF, 0]).is_ok(),
+            "third party off"
+        );
+        assert!(flags([0, 0xFF, 0xFF, 0xFF, 0xFF]).is_err(), "xinput");
+        assert!(flags([0xFF, 0xFF, 1, 0xFF, 0xFF]).is_err(), "keyboard");
+        assert!(flags([0xFF, 0xFF, 0xFF, 1, 0xFF]).is_err(), "mouse");
+        assert!(flags([0xFF, 1, 0xFF, 0xFF, 1]).is_err(), "two at once");
+        assert!(flags([0xFF, 0xFF, 0xFF, 0xFF, 2]).is_err());
+        assert!(flags([0xFF, 0xFF, 0xFF, 0xFF, 0xFF]).is_err(), "nothing");
     }
 
     #[test]

@@ -40,6 +40,15 @@ impl Info {
     pub fn supported(&self) -> bool {
         matches!(self.device_type, 128 | 129 | 133..=136)
     }
+    /// Whether apps may be allowed to take the pad over: Space Station asks
+    /// for main firmware 7.0.3.0 or later on an Apex 5.
+    pub fn third_party_capable(&self) -> bool {
+        let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|n| n.parse().ok()).collect() };
+        self.firmware
+            .iter()
+            .find(|(n, _)| *n == "main")
+            .is_some_and(|(_, v)| parse(v) >= vec![7, 0, 3, 0])
+    }
 }
 
 fn version(hi: u8, lo: u8) -> Option<String> {
@@ -188,10 +197,16 @@ pub const SENSITIVITY: [(u8, &str); 7] = [
 
 // ------------------------------------------------------------ input stream
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Flags {
     pub controller_data: bool,
     pub raw_data: bool,
+    /// "Allow third-party apps to take over mappings" (main firmware
+    /// 7.0.3.0 and later): an app that takes the pad over makes it ignore
+    /// the profile.
+    pub third_party: bool,
+    /// Name of the app holding the pad, empty when none does.
+    pub control_by: String,
 }
 
 pub fn read_flags(dev: &mut Device) -> Result<Flags> {
@@ -199,7 +214,26 @@ pub fn read_flags(dev: &mut Device) -> Result<Flags> {
     Ok(Flags {
         controller_data: r.at(6) == 1,
         raw_data: r.at(7) == 1,
+        third_party: r.at(10) == 1,
+        control_by: (11..31)
+            .map(|o| r.at(o))
+            .take_while(|b| *b != 0)
+            .map(|b| {
+                if b.is_ascii_graphic() || b == b' ' {
+                    b as char
+                } else {
+                    '?'
+                }
+            })
+            .collect(),
     })
+}
+
+/// Let apps such as Steam or reWASD take the pad over (main firmware
+/// 7.0.3.0 and later); while one holds it the profile does not apply.
+pub fn set_third_party(dev: &mut Device, on: bool) -> Result<()> {
+    dev.query(17, &[0xFF, 0xFF, 0xFF, 0xFF, on as u8], T)?;
+    Ok(())
 }
 
 pub fn set_stream(dev: &mut Device, on: bool) -> Result<()> {

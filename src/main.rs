@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use apex5::device::{Info, Settings};
+use apex5::device::{Flags, Info, Settings};
 use apex5::lighting::{Effect, LedConfig, Rgb};
 use apex5::profile::{Macro, Profile};
 use apex5::tester::Gate;
@@ -47,6 +47,7 @@ pub struct App {
     pub toast: Option<(String, bool, Instant)>,
     pub busy: bool,
     pub settings: Option<Settings>,
+    pub flags: Option<Flags>,
     pub led: Option<LedEdit>,
     /// Lighting written to the pad's working memory but not committed.
     pub led_flash_dirty: bool,
@@ -87,6 +88,7 @@ impl App {
             toast: None,
             busy: false,
             settings: None,
+            flags: None,
             led: None,
             led_flash_dirty: false,
             pad_profile: None,
@@ -186,6 +188,7 @@ impl App {
                 }
                 self.info = None;
                 self.settings = None;
+                self.flags = None;
                 self.led = None;
                 self.pad_profile = None;
                 self.edit = None;
@@ -193,6 +196,7 @@ impl App {
                 self.status = msg;
             }
             Event::Settings(s) => self.settings = Some(s),
+            Event::Flags(f) => self.flags = Some(f),
             Event::Led(cfg) => {
                 // What this editor last wrote, while the pad still plays it;
                 // otherwise read back from the frames.

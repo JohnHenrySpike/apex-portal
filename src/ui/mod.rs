@@ -640,6 +640,35 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
         });
     });
 
+    if info.third_party_capable()
+        && let Some(f) = app.flags.clone()
+    {
+        ui.add_space(12.0);
+        card_titled(ui, "Сторонние программы", |ui| {
+            let mut on = f.third_party;
+            if toggle_row(
+                ui,
+                "Разрешить перехват раскладки",
+                "Steam и другие программы на SDL смогут захватывать геймпад. Пока программа \
+                 держит его, профиль не действует, а обычный ввод геймпада (xpad) пропадает: \
+                 игры видят геймпад только через эту программу",
+                &mut on,
+            ) {
+                app.send(Cmd::SetThirdParty(on));
+            }
+            if !f.control_by.is_empty() {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Сейчас геймпад захвачен: {}. Профиль не действует, обычный ввод выключен.",
+                        f.control_by
+                    ))
+                    .color(WARN),
+                );
+            }
+        });
+    }
+
     ui.add_space(12.0);
     reset_card(app, ui);
 

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::device::{self, Info, InputState, Settings};
+use crate::device::{self, Flags, Info, InputState, Settings};
 use crate::evdev;
 use crate::hid::Device;
 use crate::lighting::LedConfig;
@@ -37,6 +37,8 @@ pub enum Cmd {
         led: Option<LedConfig>,
         slot: u8,
     },
+    /// Allow apps such as Steam or reWASD to take the pad over.
+    SetThirdParty(bool),
     /// Run the grip motors at (left, right) 0..255 for a moment, then stop.
     TestRumble(u8, u8),
 }
@@ -45,6 +47,7 @@ pub enum Event {
     Connected(Info),
     Disconnected(String),
     Settings(Settings),
+    Flags(Flags),
     Profile {
         profile: Profile,
         active: u8,
@@ -95,6 +98,8 @@ struct Worker {
     stream_was_on: bool,
     /// The gamepad node, read alongside the stream for the tester.
     pad: Option<evdev::Pad>,
+    /// Last transport flags read, and when.
+    flags: Option<(Flags, Instant)>,
 }
 
 impl Worker {
@@ -138,6 +143,15 @@ impl Worker {
             if self.streaming {
                 self.pump_input();
             }
+            // While apps may take the pad over, keep an eye on who holds it.
+            if let Some((f, at)) = &self.flags
+                && f.third_party
+                && at.elapsed() > Duration::from_secs(3)
+                && self.dev.is_some()
+                && let Err(e) = self.read_flags()
+            {
+                self.fail(e);
+            }
         }
         // App closing: stop the stream if we started it.
         if self.streaming
@@ -154,6 +168,7 @@ impl Worker {
             self.dev = None;
             self.streaming = false;
             self.pad = None;
+            self.flags = None;
             self.input.lock().unwrap().stop();
             self.send(Event::Disconnected(msg));
         } else {
@@ -185,9 +200,24 @@ impl Worker {
         self.dev.as_mut().expect("connected")
     }
 
+    /// Reads the transport flags and tells the app when they changed.
+    fn read_flags(&mut self) -> Result<()> {
+        let f = device::read_flags(self.dev())?;
+        let changed = self.flags.as_ref().is_none_or(|(old, _)| {
+            (old.third_party, &old.control_by) != (f.third_party, &f.control_by)
+        });
+        self.flags = Some((f.clone(), Instant::now()));
+        if changed {
+            self.send(Event::Flags(f));
+        }
+        Ok(())
+    }
+
     fn refresh(&mut self) -> Result<()> {
         let s = device::read_settings(self.dev())?;
         self.send(Event::Settings(s));
+        self.flags = None;
+        self.read_flags()?;
         let st = profile::status(self.dev())?;
         self.load_profile(st.active, st.active, st.versions[st.active as usize])
     }
@@ -367,6 +397,10 @@ impl Worker {
                 } else {
                     format!("Профиль {} уже такой", slot + 1)
                 }));
+            }
+            Cmd::SetThirdParty(on) => {
+                device::set_third_party(self.dev(), on)?;
+                self.read_flags()?;
             }
             Cmd::SetFeature(sub, on) => {
                 device::set_feature(self.dev(), sub, on)?;
