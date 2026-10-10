@@ -44,6 +44,8 @@ pub enum Cmd {
     TestRumble(u8, u8),
     /// Present the pad to games as a DualSense, or stop.
     DualSense(bool),
+    /// Share of the games' trigger resistance the pad gets, in %; kept.
+    DualSenseResistance(u8),
     /// Send a picture to the screen. Lets go of the pad, which restarts at
     /// the end; ends with `ScreenDone`.
     UploadScreen(Upload),
@@ -155,6 +157,12 @@ impl Worker {
                 }
                 // the virtual pad lives on while the real one is away
                 Ok(Cmd::DualSense(false)) if self.dev.is_none() => self.stop_bridge(),
+                Ok(Cmd::DualSenseResistance(pct)) if self.dev.is_none() => {
+                    bridge::Settings { resistance: pct }.store();
+                    if let Some(b) = self.bridge.as_mut() {
+                        b.set_resistance(pct); // replayed when the pad is back
+                    }
+                }
                 Ok(cmd) => {
                     if self.dev.is_none() {
                         self.send(Event::Error("геймпад не подключён".into()));
@@ -498,6 +506,13 @@ impl Worker {
                 self.send(Event::Message("Режим DualSense включён".into()));
             }
             Cmd::DualSense(true) => {}
+            Cmd::DualSenseResistance(pct) => {
+                bridge::Settings { resistance: pct }.store();
+                if let Some(b) = self.bridge.as_mut() {
+                    let now = b.set_resistance(pct);
+                    self.act(now)?;
+                }
+            }
             Cmd::DualSense(false) => {
                 self.stop_bridge();
                 self.send(Event::Message("Режим DualSense выключен".into()));

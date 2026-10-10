@@ -79,6 +79,8 @@ pub struct App {
     /// Profiles saved on this computer, read when first shown.
     pub library: Option<Vec<apex5::library::Entry>>,
     pub load_lighting: bool,
+    /// DualSense mode: % of the games' trigger resistance the pad gets.
+    pub ds5_resistance: u8,
     /// Picture for the pad's screen and its upload.
     pub screen: ui::screen::State,
     shots: Option<Shots>,
@@ -118,6 +120,7 @@ impl App {
             library: None,
             load_lighting: true,
             screen: Default::default(),
+            ds5_resistance: apex5::bridge::Settings::load().resistance,
             shots: Shots::from_env(),
         }
     }

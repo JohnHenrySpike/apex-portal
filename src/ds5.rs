@@ -346,6 +346,19 @@ pub fn translate(e: &Effect) -> Option<Apex> {
     })
 }
 
+/// Resistance (Race, Recoil) at `pct` % of its strength, never below 1;
+/// shaking and the hard stop stay as they are.
+pub fn scale_resistance(mut a: Apex, pct: u8) -> Apex {
+    let i = match a.mode {
+        1 => 1,
+        3 => 2,
+        _ => return a,
+    };
+    let v = a.params[i] as u32 * pct.min(100) as u32 / 100;
+    a.params[i] = v.max(1) as u8;
+    a
+}
+
 /// The game's effect in words.
 pub fn describe(e: &Effect) -> String {
     let p = &e.params;
@@ -418,6 +431,21 @@ mod tests {
             [cold, warm, warmer, hot].map(|a| a.params[1]),
             [3, 63, 99, 143]
         );
+    }
+
+    #[test]
+    fn resistance_scales_and_shaking_does_not() {
+        let race = apex(1, &[0, 143]);
+        assert_eq!(scale_resistance(race, 60).params[1], 85);
+        assert_eq!(scale_resistance(race, 0).params[1], 1);
+        assert_eq!(scale_resistance(race, 100), race);
+        let recoil = apex(3, &[102, 102, 255]);
+        assert_eq!(
+            scale_resistance(recoil, 50).params,
+            apex(3, &[102, 102, 127]).params
+        );
+        let shake = apex(2, &[0, 1, 255, 76]);
+        assert_eq!(scale_resistance(shake, 10), shake);
     }
 
     #[test]

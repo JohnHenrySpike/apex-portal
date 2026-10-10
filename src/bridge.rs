@@ -11,7 +11,7 @@
 
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,47 @@ pub struct Status {
     pub effects: [Option<(Effect, Option<Apex>)>; 2],
 }
 
+/// What the user set for DualSense mode, kept between runs.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Settings {
+    /// Resistance from games at this % of its strength: a trigger the game
+    /// stiffens must still press all the way (No Man's Sky's mining beam).
+    pub resistance: u8,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { resistance: 100 }
+    }
+}
+
+fn settings_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("apex5-control").join("dualsense.json"))
+}
+
+impl Settings {
+    pub fn load() -> Settings {
+        settings_path()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    /// Best effort: the mode works without it.
+    pub fn store(&self) {
+        let Some(p) = settings_path() else { return };
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(b) = serde_json::to_vec_pretty(self) {
+            let _ = std::fs::write(p, b);
+        }
+    }
+}
+
 /// Games keep a rumble alive by sending it again (SDL every 2 s); after
 /// this long without a word from the game, nothing should still shake.
 /// No Man's Sky leaves a small rumble set when it stops sending.
@@ -52,8 +93,11 @@ pub struct Bridge {
     seq: u8,
     start: Instant,
     dirty: bool,
-    /// Last effect sent per trigger, sent again when the Apex comes back.
+    /// Last effect per trigger before `resistance`, sent again when the
+    /// Apex comes back.
     effects: [Option<Apex>; 2],
+    /// % of the games' resistance the Apex gets.
+    resistance: u8,
     /// The game's last effect per trigger, to skip repeats.
     game: [Option<Effect>; 2],
     rumble: Option<(u8, u8)>,
@@ -95,6 +139,7 @@ impl Bridge {
             rumble: None,
             heard: Instant::now(),
             hushed: true,
+            resistance: Settings::load().resistance,
             log: std::env::var_os("APEX5_DS5_LOG").and_then(|p| {
                 std::fs::OpenOptions::new()
                     .create(true)
@@ -130,8 +175,32 @@ impl Bridge {
     /// The effects the game set, for an Apex that has just come back.
     pub fn replay(&self) -> Vec<Action> {
         (0..2)
-            .filter_map(|side| self.effects[side].map(|a| Action::Trigger(side, a)))
+            .filter_map(|side| self.effects[side].map(|a| Action::Trigger(side, self.scaled(a))))
             .collect()
+    }
+
+    fn scaled(&self, a: Apex) -> Apex {
+        ds5::scale_resistance(a, self.resistance)
+    }
+
+    /// A new share of the games' resistance, applied to what is on now.
+    pub fn set_resistance(&mut self, pct: u8) -> Vec<Action> {
+        self.resistance = pct.min(100);
+        let mut st = self.status.lock().unwrap();
+        let mut out = Vec::new();
+        for side in 0..2 {
+            let Some(a) = self.effects[side] else {
+                continue;
+            };
+            let now = ds5::scale_resistance(a, self.resistance);
+            if let Some((e, _)) = st.effects[side] {
+                st.effects[side] = Some((e, Some(now)));
+            }
+            if matches!(a.mode, 1 | 3) {
+                out.push(Action::Trigger(side, now));
+            }
+        }
+        out
     }
 
     pub fn motion(&mut self, s: &InputState) {
@@ -182,12 +251,12 @@ impl Bridge {
                 }
                 self.game[side] = Some(*e);
                 let a = ds5::translate(e);
-                self.status.lock().unwrap().effects[side] = Some((*e, a));
+                self.status.lock().unwrap().effects[side] = Some((*e, a.map(|a| self.scaled(a))));
                 if let Some(a) = a
                     && self.effects[side] != Some(a)
                 {
                     self.effects[side] = Some(a);
-                    out.push(Action::Trigger(side, a));
+                    out.push(Action::Trigger(side, self.scaled(a)));
                 }
             }
         }

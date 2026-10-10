@@ -35,6 +35,8 @@ pub fn card(app: &mut App, ui: &mut egui::Ui) {
         if changed {
             app.send(Cmd::DualSense(on));
         }
+        ui.add_space(6.0);
+        resistance(app, ui);
         if !ready && !st.on {
             ui.add_space(4.0);
             ui.label(
@@ -107,6 +109,28 @@ pub fn card(app: &mut App, ui: &mut egui::Ui) {
         steam_hint(ui);
         ui.ctx().request_repaint_after(Duration::from_millis(250));
     });
+}
+
+/// How much of the games' resistance reaches the Apex, kept between runs.
+fn resistance(app: &mut App, ui: &mut egui::Ui) {
+    widgets::row(
+        ui,
+        "Сила сопротивления от игры",
+        "Насколько тугими курки делает игра. Если курок нужно дожимать до конца \
+         (луч добычи в No Man's Sky), убавьте; нарастание нагрева останется",
+        |ui| {
+            let r = ui.add(
+                egui::Slider::new(&mut app.ds5_resistance, 0..=100)
+                    .suffix("%")
+                    .step_by(5.0),
+            );
+            // on release, not every frame of a drag
+            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                app.send(Cmd::DualSenseResistance(app.ds5_resistance));
+            }
+            r.changed()
+        },
+    );
 }
 
 fn steam_hint(ui: &mut egui::Ui) {
