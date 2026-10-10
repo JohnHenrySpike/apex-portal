@@ -27,6 +27,16 @@ pub enum Cmd {
     SetNumber(u8, u8),
     SetNickname(String),
     Stream(bool),
+    /// Factory content in every slot, saved; with `true` the lighting too.
+    /// Grip vibration bytes stay as they are.
+    ResetAll(bool),
+    /// Write `profile` (and `led` when given) into `slot` and save it there,
+    /// keeping the slot's vibration settings. The running slot stays.
+    Install {
+        profile: Profile,
+        led: Option<LedConfig>,
+        slot: u8,
+    },
     /// Run the grip motors at (left, right) 0..255 for a moment, then stop.
     TestRumble(u8, u8),
 }
@@ -199,6 +209,49 @@ impl Worker {
         Ok(())
     }
 
+    /// Puts `make(slot's profile)` and, when given, `led` into `slot` and
+    /// saves both to flash. Leaves `slot` running. Returns whether anything
+    /// had to be written.
+    fn put(
+        &mut self,
+        slot: u8,
+        make: impl FnOnce(&Profile) -> Profile,
+        led: Option<LedConfig>,
+    ) -> Result<bool> {
+        // either read makes `slot` the running one, which writes need
+        let old = profile::read(self.dev(), slot)?;
+        let new = make(&old);
+        let old_led = LedConfig::read(self.dev(), slot)?;
+        let led = led
+            .map(|l| LedConfig { slot, ..l })
+            .filter(|l| *l != old_led);
+        if new.blob == old.blob && led.is_none() {
+            return Ok(false); // spare the flash
+        }
+        profile::write(self.dev(), &new, &old)?;
+        if let Some(l) = led {
+            l.write(self.dev(), Some(&old_led))?;
+        }
+        let st = profile::status(self.dev())?;
+        let tag = profile::next_tag(st.versions[slot as usize]);
+        profile::save(self.dev(), slot, tag)?;
+        Ok(true)
+    }
+
+    /// Runs `f`, which may switch slots, then makes the slot that was
+    /// running before the running one again and reloads it.
+    fn keeping_slot<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        let back = profile::status(self.dev())?.active;
+        let r = f(self);
+        let st = profile::status(self.dev())?;
+        self.load_profile(back, back, st.versions[back as usize])?;
+        // a resistance engaged from before may be gone from the profile now
+        if let Some(p) = self.profile.clone() {
+            self.engage(&p, true)?;
+        }
+        r
+    }
+
     /// Live-send stored trigger effects. Only resistance modes are ever sent;
     /// with `clear` a side stored as Normal is actively cleared.
     fn engage(&mut self, p: &Profile, clear: bool) -> Result<()> {
@@ -282,6 +335,38 @@ impl Worker {
                 self.send(Event::Message(
                     "Подсветка сохранена в памяти геймпада".into(),
                 ));
+            }
+            Cmd::ResetAll(lighting) => {
+                let n = self.keeping_slot(|w| {
+                    let mut n = 0;
+                    for slot in 0..profile::SLOTS {
+                        let led = lighting.then(|| LedConfig::factory(slot));
+                        let reset = |old: &Profile| {
+                            let mut p = old.clone();
+                            p.factory_reset();
+                            p
+                        };
+                        n += w.put(slot, reset, led)? as usize;
+                    }
+                    Ok(n)
+                })?;
+                self.send(Event::Message(if n == 0 {
+                    "Все профили уже заводские".into()
+                } else {
+                    format!("Сброшено профилей: {n}, сохранено во флеш")
+                }));
+            }
+            Cmd::Install {
+                profile: p,
+                led,
+                slot,
+            } => {
+                let changed = self.keeping_slot(|w| w.put(slot, |old| p.onto(old), led))?;
+                self.send(Event::Message(if changed {
+                    format!("Записано в профиль {} и сохранено во флеш", slot + 1)
+                } else {
+                    format!("Профиль {} уже такой", slot + 1)
+                }));
             }
             Cmd::SetFeature(sub, on) => {
                 device::set_feature(self.dev(), sub, on)?;

@@ -70,9 +70,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             (ProfileTab::Sticks, "Стики"),
             (ProfileTab::Triggers, "Курки"),
             (ProfileTab::Gyro, "Гироскоп"),
+            (ProfileTab::Copies, "Копии"),
         ],
     );
     ui.add_space(14.0);
+    if app.profile_tab == ProfileTab::Copies {
+        super::copies::show(app, ui);
+        return;
+    }
 
     let tab = app.profile_tab;
     let input = app.input();
@@ -90,6 +95,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ProfileTab::Sticks => sticks(e, input, ui),
         ProfileTab::Triggers => triggers(e, ui),
         ProfileTab::Gyro => gyro(e, ui),
+        ProfileTab::Copies => {}
     }
 }
 

@@ -1,6 +1,6 @@
 //! Window layout, overview and device settings.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use apex5::device::{self, NICKNAME_MAX};
 use apex5::worker::Cmd;
@@ -8,6 +8,7 @@ use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 
 use crate::{App, Tab};
 
+pub mod copies;
 mod input;
 pub mod lighting;
 mod pad;
@@ -639,6 +640,9 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.add_space(12.0);
+    reset_card(app, ui);
+
+    ui.add_space(12.0);
     card_titled(ui, "Об устройстве", |ui| {
         egui::Grid::new("about")
             .num_columns(2)
@@ -660,6 +664,44 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
                     ui.end_row();
                 }
             });
+    });
+}
+
+/// Factory profiles in all four slots, confirmed by a second press.
+fn reset_card(app: &mut App, ui: &mut egui::Ui) {
+    const WAIT: Duration = Duration::from_secs(5);
+    card_titled(ui, "Сброс", |ui| {
+        hint(
+            ui,
+            "Вернуть заводские значения во всех четырёх профилях и сохранить их в геймпаде: \
+             кнопки, макросы, стики, курки, гироскоп и названия. Вибрация рукояток не меняется. \
+             Несохранённые изменения пропадут.",
+        );
+        ui.add_space(4.0);
+        ui.checkbox(&mut app.reset_lighting, "И подсветку тоже");
+        ui.add_space(4.0);
+        let armed = app.reset_armed.is_some_and(|t| t.elapsed() < WAIT);
+        ui.horizontal(|ui| {
+            let text = if armed {
+                "Точно сбросить? Нажмите ещё раз"
+            } else {
+                "Сбросить все профили"
+            };
+            if widgets::secondary(ui, text, !app.busy).clicked() {
+                if armed {
+                    app.reset_armed = None;
+                    app.send(Cmd::ResetAll(app.reset_lighting));
+                } else {
+                    app.reset_armed = Some(Instant::now());
+                }
+            }
+            if armed {
+                ui.ctx().request_repaint_after(Duration::from_millis(250));
+                if ui.button("Отмена").clicked() {
+                    app.reset_armed = None;
+                }
+            }
+        });
     });
 }
 

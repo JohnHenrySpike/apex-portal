@@ -28,6 +28,7 @@ pub enum ProfileTab {
     Sticks,
     Triggers,
     Gyro,
+    Copies,
 }
 
 pub struct LedEdit {
@@ -61,6 +62,15 @@ pub struct App {
     pub selected_key: u8,
     /// Rumble test strength, left and right, in %.
     pub rumble: (u8, u8),
+    /// "Reset all" asked once and waiting for the second press, since when.
+    pub reset_armed: Option<Instant>,
+    pub reset_lighting: bool,
+    /// A copy or load asked once and waiting for the second press.
+    pub copy_armed: Option<(ui::copies::Pending, Instant)>,
+    pub save_name: String,
+    /// Profiles saved on this computer, read when first shown.
+    pub library: Option<Vec<apex5::library::Entry>>,
+    pub load_lighting: bool,
     shots: Option<Shots>,
 }
 
@@ -89,6 +99,12 @@ impl App {
             streaming: false,
             selected_key: 4,
             rumble: (50, 50),
+            reset_armed: None,
+            reset_lighting: true,
+            copy_armed: None,
+            save_name: String::new(),
+            library: None,
+            load_lighting: true,
             shots: Shots::from_env(),
         }
     }
@@ -118,7 +134,7 @@ impl App {
     }
 
     /// The edited profile with the title and macro editors folded in.
-    fn edited(&self) -> Option<Profile> {
+    pub fn edited(&self) -> Option<Profile> {
         let mut e = self.edit.clone()?;
         e.set_title(&self.title);
         if e.macros() != self.macros {

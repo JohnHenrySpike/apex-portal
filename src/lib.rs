@@ -4,6 +4,7 @@
 pub mod device;
 pub mod evdev;
 pub mod hid;
+pub mod library;
 pub mod lighting;
 pub mod profile;
 pub mod safety;

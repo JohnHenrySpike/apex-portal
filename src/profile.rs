@@ -574,6 +574,31 @@ impl Profile {
         Ok(())
     }
 
+    /// This profile's settings for `target`'s slot. What this app never
+    /// writes stays as `target` has it: grip vibration strengths (the on/off
+    /// switches do come along), the triggers' vibration binding, a trigger
+    /// mode that is not a resistance, and the data version.
+    pub fn onto(&self, target: &Profile) -> Profile {
+        let mut b = self.blob.clone();
+        let t = &target.blob;
+        for o in GRIP_VIB..183 {
+            if !(GRIP_SWITCHES.contains(&o) && matches!(b[o], 0 | 0xFF)) {
+                b[o] = t[o];
+            }
+        }
+        for o in FORCE {
+            b[o + 1..o + 10].copy_from_slice(&t[o + 1..o + 10]);
+            if !crate::safety::RESISTANCE_MODES.contains(&b[o]) {
+                b[o] = t[o];
+            }
+        }
+        b[DATA_VERSION..DATA_VERSION + 2].copy_from_slice(&t[DATA_VERSION..DATA_VERSION + 2]);
+        Profile {
+            slot: target.slot,
+            blob: b,
+        }
+    }
+
     /// Factory content for this slot, keeping this profile's vibration bytes.
     pub fn factory_reset(&mut self) {
         let mut f = factory_blob(self.slot);
@@ -868,5 +893,27 @@ mod tests {
                 "{p:?} -> {back:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_copy_keeps_the_targets_vibration() {
+        let target = factory();
+        let mut source = factory();
+        source.slot = 2;
+        source.set_title("Шутер");
+        source.set_grip_vibration(false);
+        for o in [147, 151, 186, 206] {
+            source.blob[o] ^= 0x5A; // strengths and trigger binding
+        }
+        source.blob[FORCE[0]] = 2; // recoil: vibration, never written
+        source.blob[FORCE[1]] = 3; // a resistance comes along
+        let p = source.onto(&target);
+        assert_eq!(p.slot, 0);
+        assert_eq!(p.title(), "Шутер");
+        assert!(p.check_no_vibration_change(&target).is_ok());
+        assert!(GRIP_SWITCHES.iter().all(|&o| p.blob[o] == 0xFF));
+        assert_eq!(p.blob[147], target.blob[147]);
+        assert_eq!(p.force(0).mode, target.force(0).mode);
+        assert_eq!(p.force(1).mode, 3);
     }
 }

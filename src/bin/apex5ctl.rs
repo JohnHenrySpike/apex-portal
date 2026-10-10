@@ -9,6 +9,7 @@
 //!   apex5ctl led save          commit lighting to flash
 //!   apex5ctl profile switch N  make slot N (1-4) the running profile
 //!   apex5ctl profile title T   rename the active profile (RAM only)
+//!   apex5ctl profile backup    save all four slots and their lighting to files
 //!   apex5ctl input [seconds]   count stream reports and how far the sticks reach
 
 use anyhow::{Result, bail};
@@ -16,7 +17,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use apex5::tester::{self, Gate, SECTORS};
-use apex5::{device, evdev, hid::Device, lighting, profile};
+use apex5::{device, evdev, hid::Device, library, lighting, profile};
 
 fn hex_colour(s: &str) -> Result<lighting::Rgb> {
     let s = s.trim_start_matches('#');
@@ -191,6 +192,33 @@ fn main() -> Result<()> {
             // Reading a slot is what makes it the running one.
             profile::read(&mut dev, slot - 1)?;
             println!("active slot {}", profile::status(&mut dev)?.active + 1);
+        }
+        ["profile", "backup"] => {
+            let info = device::read_info(&mut dev)?;
+            let before = profile::status(&mut dev)?.active;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let mut saved = Ok(());
+            for slot in 0..profile::SLOTS {
+                // reading switches the running slot; restored below
+                let r = profile::read(&mut dev, slot).and_then(|p| {
+                    let led = lighting::LedConfig::read(&mut dev, slot)?;
+                    let name = format!("backup-{stamp}-P{}", slot + 1);
+                    let path = library::save(&name, &p, Some(&led), info.device_type)?;
+                    Ok((path, p.title()))
+                });
+                match r {
+                    Ok((path, title)) => println!("P{}  {title:<12} {}", slot + 1, path.display()),
+                    Err(e) => {
+                        saved = Err(e);
+                        break;
+                    }
+                }
+            }
+            profile::read(&mut dev, before)?;
+            println!("active slot {}", profile::status(&mut dev)?.active + 1);
+            saved?;
         }
         ["profile", "title", name] => {
             // Working memory only; not committed to flash.

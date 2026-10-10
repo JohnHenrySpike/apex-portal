@@ -100,7 +100,7 @@ impl Pad {
             if n == 0 {
                 break;
             }
-            for ev in buf[..n].chunks_exact(EVENT_LEN) {
+            for ev in buf[..n].as_chunks::<EVENT_LEN>().0 {
                 let kind = u16::from_ne_bytes([ev[16], ev[17]]);
                 let code = u16::from_ne_bytes([ev[18], ev[19]]);
                 let value = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);

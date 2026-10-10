@@ -154,7 +154,19 @@ pub fn hue(p: f32) -> Rgb {
     ][s as usize % 6]
 }
 
+/// Factory lighting of every Apex 5 slot: a backup read from this pad before
+/// any change, byte-equal to the four `ledConfigBean`s of Flydigi's
+/// `default_mapping_128.dat` (that file leaves out the grip flash, byte 9).
+const FACTORY: &[u8] = include_bytes!("../led_backup_original.bin");
+
 impl LedConfig {
+    pub fn factory(slot: u8) -> Self {
+        LedConfig {
+            slot,
+            blob: FACTORY.to_vec(),
+        }
+    }
+
     /// Reads the lighting of profile slot `slot`. NOTE: like reading a
     /// profile (163), this makes that slot the running one (HW).
     pub fn read(dev: &mut Device, slot: u8) -> Result<Self> {
@@ -466,10 +478,8 @@ mod tests {
     #[test]
     fn factory_lighting_reads_as_an_animation() {
         // the factory rainbow is stored as Default (7), not one of ours
-        let cfg = LedConfig {
-            slot: 0,
-            blob: include_bytes!("../led_backup_original.bin").to_vec(),
-        };
+        let cfg = LedConfig::factory(0);
         assert!(cfg.effect().animated());
+        assert_eq!(cfg.blob.len(), 380);
     }
 }
