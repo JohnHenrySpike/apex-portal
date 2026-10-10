@@ -428,7 +428,11 @@ Notes on these numeric settings:
   continuously at ~970 Hz (flydigi/blobs.py:47-49, flydigi/identity.py:333-336). Check command 16
   rather than assuming the stream is on or off (UNVERIFIED).
 - **Rate:** ~**970 Hz wired** (HW: 3870 reports in 4 s) and ~295–300 Hz over the dongle
-  (docs/findings-steam.md:367-369, :515-518). Read with a 32-byte buffer, or 64 bytes as the project
+  (docs/findings-steam.md:367-369, :515-518). Through two USB 2.0 hubs shared with a gaming
+  mouse and keyboard the wired rate drops to 545–555 Hz (HW, `apex5ctl input`).
+- **Sticks are raw:** the stream carries the sensor before the profile. Each axis saturates
+  before the gate's edge, so the diagonals reach 1.12–1.20 (a rounded square). The xpad node
+  gives the profile's output: a unit circle with the profile's circle mode on (HW). Read with a 32-byte buffer, or 64 bytes as the project
   does (flydigi/device.py:443).
 - Remember to send the disable command when the tester closes. The relay does so
   (flydigi/relay.py:579-592).

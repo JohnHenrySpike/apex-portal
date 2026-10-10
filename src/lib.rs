@@ -2,8 +2,10 @@
 //! device's settings, lighting and mapping profiles.
 
 pub mod device;
+pub mod evdev;
 pub mod hid;
 pub mod lighting;
 pub mod profile;
 pub mod safety;
+pub mod tester;
 pub mod worker;

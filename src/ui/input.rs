@@ -1,8 +1,10 @@
 //! Live input tester fed by the pad's vendor input stream.
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use apex5::device::{BUTTONS, InputState};
+use apex5::tester::{self, Gate, SECTORS};
 use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 
@@ -77,7 +79,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .filter(|(l, b, m)| *l != "?" && s.pressed(*b, *m))
         .filter_map(|(l, ..)| key_id(l))
         .collect();
-    let axis = |v: i16| v as f32 / 32767.0;
+    let axis = tester::axis;
     let sticks = [(axis(s.lx), axis(s.ly)), (axis(s.rx), axis(s.ry))];
     let leds = app
         .led
@@ -89,6 +91,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .map(|l| l.cfg.brightness() as f32 / 100.0)
         .unwrap_or(0.0);
 
+    let (rate, gates, out) = app.tester();
+    let reset = Cell::new(false);
     let wide = ui.available_width() > 860.0;
     let screen = format!("P{}", app.active + 1);
     let mut st = (s, pressed, sticks, leds, bright);
@@ -125,6 +129,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         text.color(FAINT)
                     });
                 }
+                if let Some(hz) = rate {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(format!("{hz:.0} Гц")).monospace().color(TEXT));
+                        hint(ui, "Частота опроса:");
+                    });
+                }
             });
         });
     };
@@ -132,8 +142,33 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         card_titled(ui, "Стики", |ui| {
             ui.horizontal(|ui| {
                 let w = ((ui.available_width() - 12.0) / 2.0).min(170.0);
-                stick(ui, w, "Левый", sticks[0]);
-                stick(ui, w, "Правый", sticks[1]);
+                for (i, name) in ["Левый", "Правый"].into_iter().enumerate() {
+                    stick(
+                        ui,
+                        w,
+                        name,
+                        sticks[i],
+                        &gates[i],
+                        out.as_ref().map(|o| &o[i]),
+                    );
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if widgets::secondary(
+                    ui,
+                    "Сбросить след",
+                    gates.iter().any(|g| g.coverage() > 0.0),
+                )
+                .clicked()
+                {
+                    reset.set(true);
+                }
+                hint(
+                    ui,
+                    "Обведите стики по краю. Цифра — среднее отклонение от круга: \
+                     «Датчик» до обработки профилем, «Для игр» — то, что получают игры.",
+                );
             });
         });
         ui.add_space(12.0);
@@ -161,6 +196,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         left(&mut st, ui);
         ui.add_space(12.0);
         right(&mut st, ui);
+    }
+    if reset.get() {
+        app.reset_gates();
     }
     ui.add_space(12.0);
     rumble(app, ui);
@@ -196,7 +234,15 @@ fn rumble(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-fn stick(ui: &mut egui::Ui, w: f32, name: &str, (x, y): (f32, f32)) {
+/// `gate` is the sensor, `out` what games get after the profile.
+fn stick(
+    ui: &mut egui::Ui,
+    w: f32,
+    name: &str,
+    (x, y): (f32, f32),
+    gate: &Gate,
+    out: Option<&Gate>,
+) {
     ui.vertical(|ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(w, w), egui::Sense::hover());
         let p = ui.painter_at(rect);
@@ -218,6 +264,23 @@ fn stick(ui: &mut egui::Ui, w: f32, name: &str, (x, y): (f32, f32)) {
             Stroke::new(1.0, Color32::from_rgb(30, 34, 41)),
         );
         // Positive Y is up on the pad, screen Y grows downwards.
+        let trace = |g: &Gate, colour: Color32| {
+            let at = |i: usize| {
+                let a = i as f32 / SECTORS as f32 * std::f32::consts::TAU;
+                let k = (g.reach[i] * r).min(w / 2.0 - 1.0);
+                pos2(c.x + a.cos() * k, c.y - a.sin() * k)
+            };
+            for i in 0..SECTORS {
+                let j = (i + 1) % SECTORS;
+                if g.reach[i] > 0.0 && g.reach[j] > 0.0 {
+                    p.line_segment([at(i), at(j)], Stroke::new(1.5, colour));
+                }
+            }
+        };
+        trace(gate, DIM);
+        if let Some(o) = out {
+            trace(o, theme::OK);
+        }
         let dot = pos2(c.x + x.clamp(-1.0, 1.0) * r, c.y - y.clamp(-1.0, 1.0) * r);
         p.line_segment([c, dot], Stroke::new(1.5, accent().gamma_multiply(0.5)));
         p.circle_filled(dot, 12.0, accent().gamma_multiply(0.2));
@@ -225,6 +288,27 @@ fn stick(ui: &mut egui::Ui, w: f32, name: &str, (x, y): (f32, f32)) {
         ui.label(
             RichText::new(format!("{name}  {x:+.2}  {y:+.2}"))
                 .monospace()
+                .size(12.5)
+                .color(DIM),
+        );
+        roundness(ui, "Датчик", gate, DIM);
+        if let Some(o) = out {
+            roundness(ui, "Для игр", o, theme::OK);
+        }
+    });
+}
+
+/// How far from a circle the edge of the trace is.
+fn roundness(ui: &mut egui::Ui, what: &str, g: &Gate, colour: Color32) {
+    let value = match g.error() {
+        Some(e) => format!("{e:.1} %"),
+        None if g.coverage() > 0.0 => format!("обведено {:.0} %", g.coverage() * 100.0),
+        None => "не обведён".into(),
+    };
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("━").size(12.5).color(colour));
+        ui.label(
+            RichText::new(format!("{what}: {value}"))
                 .size(12.5)
                 .color(DIM),
         );

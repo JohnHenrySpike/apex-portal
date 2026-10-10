@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::device::{self, Info, InputState, Settings};
+use crate::evdev;
 use crate::hid::Device;
 use crate::lighting::LedConfig;
 use crate::profile::{self, Profile};
+use crate::tester::Live;
 
 pub enum Cmd {
     Refresh,
@@ -51,13 +53,13 @@ pub enum Event {
 pub struct Handle {
     pub tx: Sender<Cmd>,
     pub rx: Receiver<Event>,
-    pub input: Arc<Mutex<Option<(InputState, Instant)>>>,
+    pub input: Arc<Mutex<Live>>,
 }
 
 pub fn spawn(repaint: impl Fn() + Send + 'static) -> Handle {
     let (tx, cmd_rx) = channel();
     let (ev_tx, rx) = channel();
-    let input = Arc::new(Mutex::new(None));
+    let input = Arc::new(Mutex::new(Live::default()));
     let shared = input.clone();
     thread::spawn(move || {
         Worker {
@@ -75,12 +77,14 @@ pub fn spawn(repaint: impl Fn() + Send + 'static) -> Handle {
 struct Worker {
     ev: Option<Sender<Event>>,
     repaint: Option<Box<dyn Fn() + Send>>,
-    input: Arc<Mutex<Option<(InputState, Instant)>>>,
+    input: Arc<Mutex<Live>>,
     dev: Option<Device>,
     profile: Option<Profile>,
     led: Option<LedConfig>,
     streaming: bool,
     stream_was_on: bool,
+    /// The gamepad node, read alongside the stream for the tester.
+    pad: Option<evdev::Pad>,
 }
 
 impl Worker {
@@ -139,6 +143,8 @@ impl Worker {
         if msg.contains("device read failed") || msg.contains("device write failed") {
             self.dev = None;
             self.streaming = false;
+            self.pad = None;
+            self.input.lock().unwrap().stop();
             self.send(Event::Disconnected(msg));
         } else {
             self.send(Event::Error(msg));
@@ -318,12 +324,17 @@ impl Worker {
                     }
                     self.streaming = true;
                     self.install_input_hook();
+                    // Best effort: without it the tester shows the sensor only.
+                    self.pad = evdev::find(&self.dev().path)
+                        .and_then(|p| evdev::Pad::open(&p))
+                        .ok();
                 } else if !on && self.streaming {
                     self.streaming = false;
+                    self.pad = None;
                     if !self.stream_was_on {
                         device::set_stream(self.dev(), false)?;
                     }
-                    *self.input.lock().unwrap() = None;
+                    self.input.lock().unwrap().stop();
                 }
             }
         }
@@ -334,7 +345,7 @@ impl Worker {
         let shared = self.input.clone();
         self.dev().on_input = Some(Box::new(move |raw| {
             if let Some(s) = InputState::parse(raw) {
-                *shared.lock().unwrap() = Some((s, Instant::now()));
+                shared.lock().unwrap().record(s);
             }
         }));
     }
@@ -346,7 +357,7 @@ impl Worker {
             match r {
                 Ok(Some(raw)) => {
                     if let Some(s) = InputState::parse(&raw) {
-                        *self.input.lock().unwrap() = Some((s, Instant::now()));
+                        self.input.lock().unwrap().record(s);
                         got = true;
                     }
                 }
@@ -355,6 +366,18 @@ impl Worker {
                     self.fail(e);
                     return;
                 }
+            }
+        }
+        if let Some(pad) = self.pad.as_mut() {
+            match pad.read() {
+                Ok(reports) => {
+                    let mut live = self.input.lock().unwrap();
+                    for sticks in reports {
+                        live.record_output(sticks);
+                        got = true;
+                    }
+                }
+                Err(_) => self.pad = None,
             }
         }
         if got && let Some(r) = &self.repaint {

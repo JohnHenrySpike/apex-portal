@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use apex5::device::{Info, Settings};
 use apex5::lighting::{Effect, LedConfig, Rgb};
 use apex5::profile::{Macro, Profile};
+use apex5::tester::Gate;
 use apex5::worker::{self, Cmd, Event, Handle};
 use eframe::egui;
 
@@ -98,9 +99,22 @@ impl App {
 
     pub fn input(&self) -> Option<apex5::device::InputState> {
         let g = self.h.input.lock().unwrap();
-        g.as_ref()
+        g.last
+            .as_ref()
             .filter(|(_, t)| t.elapsed() < Duration::from_millis(500))
             .map(|(s, _)| *s)
+    }
+
+    /// Polling rate and stick gates gathered by the input tester.
+    /// Polling rate, sensor gates and output gates (`None` without the
+    /// gamepad node).
+    pub fn tester(&self) -> (Option<f32>, [Gate; 2], Option<[Gate; 2]>) {
+        let g = self.h.input.lock().unwrap();
+        (g.rate, g.gates, g.out_sticks.map(|_| g.out_gates))
+    }
+
+    pub fn reset_gates(&self) {
+        self.h.input.lock().unwrap().reset_gates();
     }
 
     /// The edited profile with the title and macro editors folded in.
