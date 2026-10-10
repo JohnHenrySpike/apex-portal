@@ -13,6 +13,7 @@ mod input;
 pub mod lighting;
 mod pad;
 mod profile;
+pub mod screen;
 pub mod theme;
 mod widgets;
 
@@ -28,6 +29,13 @@ const NAV: [(Tab, Icon, &str); 5] = [
 ];
 
 pub fn shell(app: &mut App, ui: &mut egui::Ui) {
+    if app.screen.job.is_some() {
+        toast(app, ui);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(theme::BG))
+            .show(ui, |ui| screen::job_page(app, ui));
+        return;
+    }
     sidebar(app, ui);
     if app.tab == Tab::Profile && app.info.is_some() {
         profile::action_bar(app, ui);
@@ -261,7 +269,7 @@ fn toast(app: &App, ui: &mut egui::Ui) {
     ui.ctx().request_repaint_after(Duration::from_millis(250));
 }
 
-fn disconnected(app: &App, ui: &mut egui::Ui) {
+fn disconnected(app: &mut App, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         let w = ui.available_width().min(560.0);
@@ -289,12 +297,17 @@ fn disconnected(app: &App, ui: &mut egui::Ui) {
         ui.label(RichText::new(&app.status).size(12.5).color(FAINT));
         ui.add_space(4.0);
         ui.label(
-            RichText::new(
-                "Если геймпад подключён, но нет доступа, установите правило udev (см. README).",
-            )
-            .size(12.5)
-            .color(FAINT),
+            RichText::new("Если геймпад подключён, но нет доступа, установите правило udev.")
+                .size(12.5)
+                .color(FAINT),
         );
+        if app.status.contains("udev") {
+            ui.add_space(8.0);
+            ui.scope(|ui| {
+                ui.set_max_width(260.0);
+                screen::rule_offer(app, ui);
+            });
+        }
         ui.add_space(12.0);
         ui.add(egui::Spinner::new().size(22.0).color(accent()));
     });
@@ -608,11 +621,8 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
         }
-        ui.add_space(4.0);
-        hint(
-            ui,
-            "Загрузка своей картинки не поддерживается: для неё чип экрана нужно переводить в режим прошивки.",
-        );
+        widgets::separator(ui);
+        screen::card(app, ui);
     });
 
     ui.add_space(12.0);

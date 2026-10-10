@@ -538,6 +538,10 @@ For reference only:
 
 ### 4.4 Upload path B — serial OTA to the screen chip: **the path that works** (HW: test card + 14-frame animation)
 
+Implemented in `src/screen.rs` (GUI: Settings → Screen; CLI: `apex5ctl screen upload`) and HW-verified with
+this app. The frame layout matches Flydigi's `default_screen_image_128.bin`, and the session follows
+`OtaNewUpdater.cs`.
+
 Sources: flydigi/screen_ota.py (whole file); PROTOCOL.md:674-806; docs/findings-screen.md:88-125;
 gui/worker.py:764-809.
 

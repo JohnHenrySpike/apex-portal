@@ -149,6 +149,16 @@ impl Device {
             .map_err(|e| anyhow!("device write failed: {e}"))
     }
 
+    /// Command 31 for the screen chip, exactly `safety::SCREEN_UPLOAD_MODE`;
+    /// call it through `device::enter_screen_upload`.
+    pub(crate) fn switch_screen(&mut self) -> Result<()> {
+        let mut pkt = [0u8; PACKET_LEN];
+        pkt[..7].copy_from_slice(&safety::SCREEN_UPLOAD_MODE);
+        self.file
+            .write_all(&pkt)
+            .map_err(|e| anyhow!("device write failed: {e}"))
+    }
+
     /// Send without waiting for a reply.
     pub fn send(&mut self, pkt: [u8; PACKET_LEN]) -> Result<()> {
         self.write_packet(&pkt)

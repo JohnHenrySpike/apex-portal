@@ -14,6 +14,7 @@ use crate::evdev;
 use crate::hid::Device;
 use crate::lighting::LedConfig;
 use crate::profile::{self, Profile};
+use crate::screen::{self, Upload};
 use crate::tester::Live;
 
 pub enum Cmd {
@@ -41,6 +42,9 @@ pub enum Cmd {
     SetThirdParty(bool),
     /// Run the grip motors at (left, right) 0..255 for a moment, then stop.
     TestRumble(u8, u8),
+    /// Send a picture to the screen. Lets go of the pad, which restarts at
+    /// the end; ends with `ScreenDone`.
+    UploadScreen(Upload),
 }
 
 pub enum Event {
@@ -58,6 +62,9 @@ pub enum Event {
     Led(LedConfig),
     /// Lighting committed to flash.
     LedSaved,
+    Screen(screen::Stage),
+    /// The upload is over, and the error if it failed.
+    ScreenDone(Result<(), String>),
     Busy(bool),
     Message(String),
     Error(String),
@@ -125,6 +132,13 @@ impl Worker {
                 Duration::from_millis(200)
             };
             match rx.recv_timeout(timeout) {
+                Ok(Cmd::UploadScreen(up)) => {
+                    self.send(Event::Busy(true));
+                    let r = self.upload_screen(up).map_err(|e| format!("{e:#}"));
+                    self.send(Event::Busy(false));
+                    self.send(Event::ScreenDone(r));
+                    last_try = Instant::now();
+                }
                 Ok(cmd) => {
                     if self.dev.is_none() {
                         self.send(Event::Error("геймпад не подключён".into()));
@@ -435,6 +449,7 @@ impl Worker {
                 };
                 run.and(stop)?;
             }
+            Cmd::UploadScreen(_) => unreachable!("run() takes it"),
             Cmd::Stream(on) => {
                 if on && !self.streaming {
                     self.stream_was_on = device::read_flags(self.dev())?.raw_data;
@@ -457,6 +472,36 @@ impl Worker {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Checks what can be checked while connected, then hands the pad over
+    /// to `screen::upload` and waits out the screen's save.
+    fn upload_screen(&mut self, up: Upload) -> Result<()> {
+        let retry = screen::find_port().is_some();
+        if !retry {
+            let Some(d) = self.dev.as_mut() else {
+                anyhow::bail!("геймпад не подключён")
+            };
+            if !screen::rule_installed() {
+                anyhow::bail!(screen::RULE_HINT);
+            }
+            if !device::read_info(d)?.wired {
+                anyhow::bail!("картинку можно загрузить только по кабелю");
+            }
+            if self.streaming && !self.stream_was_on {
+                device::set_stream(d, false)?;
+            }
+        }
+        self.streaming = false;
+        self.pad = None;
+        self.flags = None;
+        self.input.lock().unwrap().stop();
+        let dev = self.dev.take();
+        self.send(Event::Disconnected("Загрузка картинки на экран".into()));
+        screen::upload(dev, &up, &mut |s| self.send(Event::Screen(s)))?;
+        // the screen saves and the pad restarts; do not talk to it meanwhile
+        thread::sleep(Duration::from_secs(20));
         Ok(())
     }
 

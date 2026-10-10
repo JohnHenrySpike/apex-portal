@@ -13,13 +13,18 @@
 //!   apex5ctl input [seconds]   count stream reports and how far the sticks reach
 //!   apex5ctl keys [seconds]    buttons as games see them (after the profile);
 //!                              runs beside the GUI, it does not open hidraw
+//!   apex5ctl screen preview FILE OUT.png [whole]
+//!                              the frames as the screen will show them (no pad needed)
+//!   apex5ctl screen upload FILE [ms] [whole]
+//!                              send a picture, GIF or Flydigi's factory .bin to the
+//!                              screen; cable only, asks first, takes ~25 s per frame
 
 use anyhow::{Result, bail};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use apex5::tester::{self, Gate, SECTORS};
-use apex5::{device, evdev, hid, hid::Device, library, lighting, profile};
+use apex5::{device, evdev, hid, hid::Device, library, lighting, profile, screen};
 
 fn hex_colour(s: &str) -> Result<lighting::Rgb> {
     let s = s.trim_start_matches('#');
@@ -273,6 +278,79 @@ fn keys(secs: u64) -> Result<()> {
     Ok(())
 }
 
+/// The frames to send: a factory `.bin` as it is, anything else decoded and
+/// fitted. Returns the upload and how it was made.
+fn screen_frames(file: &str, rest: &[&str]) -> Result<(screen::Upload, String)> {
+    let path = std::path::Path::new(file);
+    if path.extension().is_some_and(|e| e == "bin") {
+        let up = screen::Upload::factory(std::fs::read(path)?)?;
+        let what = format!("factory animation, {} frames", up.frames);
+        return Ok((up, what));
+    }
+    let fit = if rest.contains(&"whole") {
+        screen::Fit::Whole
+    } else {
+        screen::Fit::Fill
+    };
+    let ms = rest.iter().find_map(|a| a.parse::<u32>().ok());
+    let src = screen::decode(path)?;
+    let frames: Vec<Vec<u8>> = src.frames.iter().map(|f| screen::encode(f, fit)).collect();
+    let interval = ms.or(src.interval_ms).unwrap_or(100);
+    let up = screen::Upload::new(&frames, interval)?;
+    let mut what = format!("{} frame(s), {} ms", up.frames, up.frame_rate as u32 * 10);
+    if src.cut {
+        what += &format!(", only the first {}", screen::MAX_FRAMES);
+    }
+    Ok((up, what))
+}
+
+fn screen_preview(file: &str, out: &str, rest: &[&str]) -> Result<()> {
+    let (up, what) = screen_frames(file, rest)?;
+    // up to 12 frames, 3 across, twice the size
+    let n = up.frames.min(12) as u32;
+    let (w, h) = (screen::W * 2, screen::H * 2);
+    let cols = n.min(3);
+    let mut sheet = image::RgbaImage::new(cols * (w + 8), n.div_ceil(3) * (h + 8));
+    for i in 0..n {
+        let f = screen::to_rgba(up.frame(i as usize));
+        let big = image::imageops::resize(&f, w, h, image::imageops::FilterType::Nearest);
+        let (x, y) = ((i % 3) * (w + 8), (i / 3) * (h + 8));
+        image::imageops::overlay(&mut sheet, &big, x as i64, y as i64);
+    }
+    sheet.save(out)?;
+    println!("{what}; wrote {out}");
+    Ok(())
+}
+
+fn screen_upload(file: &str, rest: &[&str]) -> Result<()> {
+    let (up, what) = screen_frames(file, rest)?;
+    let minutes = (up.frames as u32 * screen::SECONDS_PER_FRAME).div_ceil(60);
+    println!("{what}. About {minutes} min. Keep the cable in and the pad on.");
+    println!("Close the GUI first. Type yes to upload:");
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    if answer.trim() != "yes" {
+        bail!("not uploaded");
+    }
+    let dev = if screen::find_port().is_some() {
+        None
+    } else {
+        Some(Device::open()?)
+    };
+    let started = Instant::now();
+    let mut shown = usize::MAX;
+    screen::upload(dev, &up, &mut |s| match s {
+        screen::Stage::Switching => println!("waiting for the screen's port…"),
+        screen::Stage::Writing(done, total) => {
+            if done * 100 / total != shown {
+                shown = done * 100 / total;
+                println!("{shown}% ({:.0} s)", started.elapsed().as_secs_f32());
+            }
+        }
+        screen::Stage::Saving => println!("done; the screen saves for ~15 s and the pad restarts"),
+    })
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -280,6 +358,8 @@ fn main() -> Result<()> {
     match a.as_slice() {
         ["keys"] => return keys(10),
         ["keys", secs] => return keys(secs.parse()?),
+        ["screen", "preview", file, out, rest @ ..] => return screen_preview(file, out, rest),
+        ["screen", "upload", file, rest @ ..] => return screen_upload(file, rest),
         _ => {}
     }
     let mut dev = Device::open()?;
@@ -419,7 +499,9 @@ fn main() -> Result<()> {
             println!("wrote {} packets", new.write(&mut dev, Some(&old))?);
         }
         _ => {
-            bail!("usage: apex5ctl info | input [seconds] | keys [seconds] | profile ... | led ...")
+            bail!(
+                "usage: apex5ctl info | input [seconds] | keys [seconds] | profile ... | led ... | screen ..."
+            )
         }
     }
     Ok(())

@@ -3,13 +3,19 @@
 //!
 //! Grip rumble (0x12) only in SDL's form for the two grip motors, for the
 //! rumble test. Never allowed: rumble-to-trigger bind (82), vibrating
-//! trigger modes (81 mode 2/5), firmware/upgrade mode (31), factory reset
-//! (253), reset-all-profiles (175), mode switch (27), restart (29), report
+//! trigger modes (81 mode 2/5), firmware/upgrade mode (31; the one way past
+//! it is `SCREEN_UPLOAD_MODE` below), factory reset (253),
+//! reset-all-profiles (175), mode switch (27), restart (29), report
 //! rate (20), test floods (242/245), the HID picture family (208-211), the
 //! Switch-bank commit (171), third-party capture (28), the factory/test range
 //! (240-253) and the device-type rewrite (254).
 
 use anyhow::{Result, bail};
+
+/// Command 31 with chip 4 (the screen), the one way into a picture upload.
+/// `check` still refuses it: it is sent only by `Device::switch_screen`,
+/// after `device::enter_screen_upload` has seen the cable.
+pub const SCREEN_UPLOAD_MODE: [u8; 7] = [0x03, 0x5A, 0xA5, 0x1F, 0x03, 0x04, 0x26];
 
 /// Sub-ids of command 19 the app may toggle (2 = Xbox home, 3/10 unsupported).
 /// 4 is Space Station's "Turbo Function".
@@ -104,6 +110,14 @@ mod tests {
         assert!(check(&build(19, &[2, 1], true)).is_err());
         assert!(check(&build(17, &[0, 1, 0xFF, 0xFF, 0xFF], true)).is_err());
         assert!(check(&build(17, &[0xFF, 1, 0xFF, 0xFF, 0xFF], true)).is_ok());
+    }
+
+    #[test]
+    fn the_screen_switch_is_command_31_for_chip_4_only() {
+        let mut pkt = [0u8; 32];
+        pkt[..7].copy_from_slice(&SCREEN_UPLOAD_MODE);
+        assert_eq!(pkt, build(31, &[4], true));
+        assert!(check(&pkt).is_err(), "never through the ordinary path");
     }
 
     #[test]

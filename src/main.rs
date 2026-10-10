@@ -79,6 +79,8 @@ pub struct App {
     /// Profiles saved on this computer, read when first shown.
     pub library: Option<Vec<apex5::library::Entry>>,
     pub load_lighting: bool,
+    /// Picture for the pad's screen and its upload.
+    pub screen: ui::screen::State,
     shots: Option<Shots>,
 }
 
@@ -115,6 +117,7 @@ impl App {
             save_name: String::new(),
             library: None,
             load_lighting: true,
+            screen: Default::default(),
             shots: Shots::from_env(),
         }
     }
@@ -188,7 +191,8 @@ impl App {
                 self.info = Some(info);
             }
             Event::Disconnected(msg) => {
-                if self.info.is_some() {
+                // an upload lets go of the pad on purpose
+                if self.info.is_some() && self.screen.job.is_none() {
                     self.toast = Some(("Геймпад отключился".into(), true, Instant::now()));
                 }
                 self.info = None;
@@ -245,6 +249,8 @@ impl App {
                 self.flash_dirty = true;
                 self.pad_profile = Some(p);
             }
+            Event::Screen(s) => ui::screen::on_stage(self, s),
+            Event::ScreenDone(r) => ui::screen::on_done(self, r),
             Event::Busy(b) => self.busy = b,
             Event::Message(m) => self.toast = Some((m, false, Instant::now())),
             Event::Error(m) => self.toast = Some((m, true, Instant::now())),
@@ -292,9 +298,19 @@ impl eframe::App for App {
             self.led_flash_dirty = true;
             let _ = self.h.tx.send(Cmd::WriteLed(cfg));
         }
+        // Closing mid-upload would leave the screen without a picture.
+        if self.screen.job.is_some() && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.toast = Some((
+                "Дождитесь конца загрузки картинки".into(),
+                true,
+                Instant::now(),
+            ));
+        }
         let want_stream = (self.tab == Tab::Input
             || (self.tab == Tab::Profile && self.profile_tab == ProfileTab::Sticks))
-            && self.info.is_some();
+            && self.info.is_some()
+            && self.screen.job.is_none();
         if want_stream != self.streaming {
             self.streaming = want_stream;
             self.send(Cmd::Stream(want_stream));

@@ -112,6 +112,16 @@ pub fn write_nickname(dev: &mut Device, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Hands the screen chip to its bootloader for a picture upload. Cable only:
+/// over the dongle the pad hangs until switched off.
+pub fn enter_screen_upload(dev: &mut Device) -> Result<()> {
+    let r = need(dev.query(1, &[], T)?, "get-info")?;
+    if r.at(7) != 1 {
+        bail!("картинку можно загрузить только по кабелю");
+    }
+    dev.switch_screen()
+}
+
 // ---------------------------------------------------------------- settings
 
 #[derive(Clone, Debug, Default, PartialEq)]

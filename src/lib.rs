@@ -8,5 +8,7 @@ pub mod library;
 pub mod lighting;
 pub mod profile;
 pub mod safety;
+pub mod screen;
 pub mod tester;
+pub mod udev;
 pub mod worker;
