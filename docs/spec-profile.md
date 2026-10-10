@@ -666,6 +666,15 @@ uint16 LE. Factory 0xFFFF. See §2.6.
 Turbo is per-key in the key table (§3.1, bytes +1 and +2). The physical Turbo key (id 25) arms it.
 There is no separate turbo block.
 
+Measured on the xpad node (`apex5ctl keys`) [HW]:
+* An entry written by the host, `[id, 1, 10]`, repeats at 9.8 presses/s, with setting sub 4 on or off.
+* Turbo + key on the pad turns turbo on in the pad's memory only. The key table gets
+  `[255, 0, 15]` (mode 0) and the firmware does not repeat that entry: held, the key gives one
+  press. So turbo is on only when mode != 0 and frequency != 0 (`KeyBinding::turbo`); Flydigi's read
+  rule (frequency > 0) would show this entry as turbo.
+* Setting sub 4 off disables Turbo + key; after it was switched off and on, the turbo set on the
+  pad was gone [inference: switching it off resets it].
+
 ### 3.13 Factory Apex 5 profile (read off hardware; slot N: byte 774 = 0x31+N)
 
 Source: FC:76-102 (the file header is GPL-3.0-or-later; NOTICE states the bytes are device data,

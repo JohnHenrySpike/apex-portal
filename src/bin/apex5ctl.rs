@@ -11,13 +11,15 @@
 //!   apex5ctl profile title T   rename the active profile (RAM only)
 //!   apex5ctl profile backup    save all four slots and their lighting to files
 //!   apex5ctl input [seconds]   count stream reports and how far the sticks reach
+//!   apex5ctl keys [seconds]    buttons as games see them (after the profile);
+//!                              runs beside the GUI, it does not open hidraw
 
 use anyhow::{Result, bail};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use apex5::tester::{self, Gate, SECTORS};
-use apex5::{device, evdev, hid::Device, library, lighting, profile};
+use apex5::{device, evdev, hid, hid::Device, library, lighting, profile};
 
 fn hex_colour(s: &str) -> Result<lighting::Rgb> {
     let s = s.trim_start_matches('#');
@@ -176,9 +178,110 @@ fn input(dev: &mut Device, secs: u64) -> Result<()> {
     Ok(())
 }
 
+/// xpad's names for what it reports: keys, the d-pad hat and the triggers.
+fn control(kind: u16, code: u16, value: i32) -> Option<String> {
+    let key = |c| match c {
+        304 => "A",
+        305 => "B",
+        307 => "X",
+        308 => "Y",
+        310 => "LB",
+        311 => "RB",
+        314 => "View",
+        315 => "Menu",
+        316 => "Home",
+        317 => "L3",
+        318 => "R3",
+        704 => "←",
+        705 => "→",
+        706 => "↑",
+        707 => "↓",
+        _ => "",
+    };
+    match (kind, code) {
+        (evdev::EV_KEY, c) => Some(match key(c) {
+            "" => format!("key {c}"),
+            n => n.into(),
+        }),
+        (evdev::EV_ABS, 16) => Some(if value < 0 { "←" } else { "→" }.into()),
+        (evdev::EV_ABS, 17) => Some(if value < 0 { "↑" } else { "↓" }.into()),
+        (evdev::EV_ABS, 2) => Some("LT".into()),
+        (evdev::EV_ABS, 5) => Some("RT".into()),
+        _ => None,
+    }
+}
+
+/// Presses and releases on the gamepad node, then presses per control and
+/// their rate (turbo shows as a steady rate while one button is held).
+fn keys(secs: u64) -> Result<()> {
+    let node = evdev::find(&hid::find_device()?)?;
+    let mut pad = evdev::Pad::open(&node)?;
+    pad.events()?;
+    println!("{}: reading for {secs} s", node.display());
+    // per control: is it down, times it went down
+    let mut seen: BTreeMap<String, (bool, Vec<f64>)> = BTreeMap::new();
+    // the hat axes report one direction at a time; remember which
+    let mut hat: [Option<String>; 2] = [None, None];
+    let mut start = None;
+    let until = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < until {
+        for ev in pad.events()? {
+            let hat_axis = (ev.kind == evdev::EV_ABS && matches!(ev.code, 16 | 17))
+                .then(|| (ev.code - 16) as usize);
+            let (name, down) = if let Some(h) = hat_axis {
+                match (ev.value, hat[h].take()) {
+                    (0, Some(n)) => (n, false),
+                    (0, None) => continue,
+                    (v, _) => {
+                        let n = control(ev.kind, ev.code, v).unwrap();
+                        hat[h] = Some(n.clone());
+                        (n, true)
+                    }
+                }
+            } else {
+                match control(ev.kind, ev.code, ev.value) {
+                    Some(n) => (n, ev.value != 0),
+                    None => continue,
+                }
+            };
+            let e = seen.entry(name.clone()).or_default();
+            if e.0 == down {
+                continue;
+            }
+            e.0 = down;
+            let t0 = *start.get_or_insert(ev.time);
+            if down {
+                e.1.push(ev.time);
+            }
+            println!(
+                "{:>8.3} s  {name:<5} {}",
+                ev.time - t0,
+                if down { "down" } else { "up" }
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    println!();
+    for (name, (_, downs)) in &seen {
+        let mut gaps: Vec<f64> = downs.windows(2).map(|w| w[1] - w[0]).collect();
+        gaps.sort_by(f64::total_cmp);
+        let rate = gaps.get(gaps.len() / 2).map_or(String::new(), |g| {
+            format!("  median {:.1} presses/s", 1.0 / g)
+        });
+        println!("{name:<5} {:>4} presses{rate}", downs.len());
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Only the gamepad node: the GUI may keep the vendor node open.
+    match a.as_slice() {
+        ["keys"] => return keys(10),
+        ["keys", secs] => return keys(secs.parse()?),
+        _ => {}
+    }
     let mut dev = Device::open()?;
     match a.as_slice() {
         ["info"] | [] => info(&mut dev)?,
@@ -315,7 +418,9 @@ fn main() -> Result<()> {
             }
             println!("wrote {} packets", new.write(&mut dev, Some(&old))?);
         }
-        _ => bail!("usage: apex5ctl info | input [seconds] | profile ... | led ..."),
+        _ => {
+            bail!("usage: apex5ctl info | input [seconds] | keys [seconds] | profile ... | led ...")
+        }
     }
     Ok(())
 }

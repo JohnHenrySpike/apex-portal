@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-const EV_SYN: u16 = 0;
-const EV_ABS: u16 = 3;
+pub const EV_SYN: u16 = 0;
+pub const EV_KEY: u16 = 1;
+pub const EV_ABS: u16 = 3;
 /// ABS_X, ABS_Y, ABS_RX, ABS_RY.
 const AXES: [u16; 4] = [0, 1, 3, 4];
 
@@ -58,6 +59,27 @@ pub fn find(hidraw: &Path) -> Result<PathBuf> {
     bail!("no gamepad event node next to {}", hidraw.display())
 }
 
+/// One `struct input_event`.
+#[derive(Clone, Copy, Debug)]
+pub struct Event {
+    /// Kernel timestamp in seconds.
+    pub time: f64,
+    pub kind: u16,
+    pub code: u16,
+    pub value: i32,
+}
+
+fn event(ev: &[u8; EVENT_LEN]) -> Event {
+    let secs = i64::from_ne_bytes(ev[0..8].try_into().unwrap());
+    let usecs = i64::from_ne_bytes(ev[8..16].try_into().unwrap());
+    Event {
+        time: secs as f64 + usecs as f64 / 1e6,
+        kind: u16::from_ne_bytes([ev[16], ev[17]]),
+        code: u16::from_ne_bytes([ev[18], ev[19]]),
+        value: i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]),
+    }
+}
+
 pub struct Pad {
     file: File,
     range: [(i32, i32); 4],
@@ -86,9 +108,8 @@ impl Pad {
         Ok(Pad { file, range, raw })
     }
 
-    /// Reads what is queued and returns the stick positions at every
-    /// report, in -1..1 with +Y up: `[(lx, ly), (rx, ry)]`.
-    pub fn read(&mut self) -> Result<Vec<[(f32, f32); 2]>> {
+    /// Everything queued on the node, oldest first.
+    pub fn events(&mut self) -> Result<Vec<Event>> {
         let mut out = Vec::new();
         let mut buf = [0u8; EVENT_LEN * 64];
         loop {
@@ -100,19 +121,24 @@ impl Pad {
             if n == 0 {
                 break;
             }
-            for ev in buf[..n].as_chunks::<EVENT_LEN>().0 {
-                let kind = u16::from_ne_bytes([ev[16], ev[17]]);
-                let code = u16::from_ne_bytes([ev[18], ev[19]]);
-                let value = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);
-                match kind {
-                    EV_ABS => {
-                        if let Some(i) = AXES.iter().position(|a| *a == code) {
-                            self.raw[i] = value;
-                        }
+            out.extend(buf[..n].as_chunks::<EVENT_LEN>().0.iter().map(event));
+        }
+        Ok(out)
+    }
+
+    /// Reads what is queued and returns the stick positions at every
+    /// report, in -1..1 with +Y up: `[(lx, ly), (rx, ry)]`.
+    pub fn read(&mut self) -> Result<Vec<[(f32, f32); 2]>> {
+        let mut out = Vec::new();
+        for ev in self.events()? {
+            match ev.kind {
+                EV_ABS => {
+                    if let Some(i) = AXES.iter().position(|a| *a == ev.code) {
+                        self.raw[i] = ev.value;
                     }
-                    EV_SYN if code == 0 => out.push(self.sticks()),
-                    _ => {}
                 }
+                EV_SYN if ev.code == 0 => out.push(self.sticks()),
+                _ => {}
             }
         }
         Ok(out)

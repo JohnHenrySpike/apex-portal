@@ -88,6 +88,15 @@ pub struct KeyBinding {
     pub turbo_freq: u8, // 0 = turbo off
 }
 
+impl KeyBinding {
+    /// Whether the pad repeats this key. Turbo + key on the pad leaves
+    /// `[255, 0, 15]` here and keeps its own turbo in memory only; the
+    /// firmware does not repeat on mode 0 whatever the frequency [HW].
+    pub fn turbo(&self) -> bool {
+        self.turbo_mode != 0 && self.turbo_freq != 0
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Stick {
     pub kind: u8, // 0 default, 1 quick, 2 slow, 3 custom
@@ -287,12 +296,14 @@ impl Profile {
         if b.target == id {
             b.target = TARGET_IDENTITY;
         }
-        if b.turbo_freq > 0 {
+        if b.turbo() {
             if b.target >= TARGET_KEYBOARD {
                 b.target = id;
             }
         } else {
+            // Flydigi writes `[target, 0, 0]` for a key without turbo
             b.turbo_mode = 0;
+            b.turbo_freq = 0;
         }
         let o = KEYS + 3 * id as usize;
         self.blob[o..o + 3].copy_from_slice(&[b.target, b.turbo_mode, b.turbo_freq]);
@@ -749,6 +760,43 @@ mod tests {
         s.center = 60;
         s.compile();
         assert_eq!(s.bank, [0, 0, 0, 0, 26, 56, 87, 118, 150]);
+    }
+
+    #[test]
+    fn turbo_left_by_the_pad_is_off() {
+        // what Turbo + Y on the pad leaves in the key table [HW]
+        let left = KeyBinding {
+            target: TARGET_IDENTITY,
+            turbo_mode: 0,
+            turbo_freq: 15,
+        };
+        assert!(!left.turbo());
+        let mut p = factory();
+        p.set_key(4, KeyBinding { target: 7, ..left });
+        assert_eq!(
+            p.key(4),
+            KeyBinding {
+                target: 7,
+                turbo_mode: 0,
+                turbo_freq: 0
+            }
+        );
+        p.set_key(
+            4,
+            KeyBinding {
+                target: TARGET_IDENTITY,
+                turbo_mode: 1,
+                turbo_freq: 10,
+            },
+        );
+        assert_eq!(
+            p.key(4),
+            KeyBinding {
+                target: 4,
+                turbo_mode: 1,
+                turbo_freq: 10
+            }
+        );
     }
 
     #[test]

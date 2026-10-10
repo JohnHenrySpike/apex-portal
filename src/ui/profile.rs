@@ -202,7 +202,7 @@ fn is_remapped(p: &Profile, id: u8) -> bool {
     let own = k.target == TARGET_IDENTITY
         || k.target == id
         || (k.target > 32 && k.target != TARGET_MACRO);
-    !own || k.turbo_freq != 0
+    !own || k.turbo()
 }
 
 fn key_title(id: u8) -> String {
@@ -250,7 +250,7 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
             if let Some(id) = r.hovered {
                 let k = p.key(id);
                 let mut tip = format!("{} → {}", key_title(id), target_label(id, k.target));
-                if k.turbo_freq != 0 {
+                if k.turbo() {
                     tip += &format!(", турбо {} нажатий/с", k.turbo_freq);
                 }
                 egui::Tooltip::always_open(
@@ -342,10 +342,10 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
 
         ui.add_space(12.0);
         widgets::caption(ui, "Турбо");
-        let mut mode = if k.turbo_freq == 0 {
-            0u8
-        } else {
+        let mut mode = if k.turbo() {
             k.turbo_mode.clamp(1, 2)
+        } else {
+            0u8
         };
         ui.add_enabled_ui(k.target != TARGET_MACRO, |ui| {
             segmented(
@@ -355,8 +355,11 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
             );
         });
         if mode == 0 {
-            k.turbo_freq = 0;
-            k.turbo_mode = 0;
+            // only when switched off here: looking at a key must not edit it
+            if k.turbo() {
+                k.turbo_freq = 0;
+                k.turbo_mode = 0;
+            }
         } else {
             k.turbo_mode = mode;
             if k.turbo_freq == 0 {
