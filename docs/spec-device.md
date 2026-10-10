@@ -396,6 +396,9 @@ The "default seen" column is the HW reply 0xFB/0x7B/0x01/0x00 (tests/test_settin
 | **29** (0x1D) | restart | `03 5A A5 1D 02 1F` (no argument) | **Never sent on HW.** The hidraw node vanishes and returns, so reopen it (flydigi/settings.py:262-270; docs/device-settings.md:20-24) |
 
 Notes on these numeric settings:
+- **They persist** [HW]: precision 3 (12-bit), sensitivity 19, sleep 5 min and sub-features
+  (sub 1 off, sub 9 on) read back the same after the pad slept and after it was switched off and
+  on. No save command is needed.
 - **Precision only affects the xpad/evdev path.** It quantises evdev output. The 0xEF vendor
   stream is **not** quantised (docs/device-settings.md:133-147).
 - **Sleep has a real cost.** Sleep makes the pad leave USB; a sleeping pad is indistinguishable
