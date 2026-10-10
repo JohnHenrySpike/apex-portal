@@ -126,6 +126,11 @@ impl App {
         let _ = self.h.tx.send(c);
     }
 
+    /// DualSense mode as the worker last left it.
+    pub fn ds5(&self) -> apex5::bridge::Status {
+        self.h.ds5.lock().unwrap().clone()
+    }
+
     pub fn input(&self) -> Option<apex5::device::InputState> {
         let g = self.h.input.lock().unwrap();
         g.last

@@ -9,6 +9,7 @@ use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 use crate::{App, Tab};
 
 pub mod copies;
+mod dualsense;
 mod input;
 pub mod lighting;
 mod pad;
@@ -698,6 +699,9 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     }
+
+    ui.add_space(12.0);
+    dualsense::card(app, ui);
 
     ui.add_space(12.0);
     reset_card(app, ui);

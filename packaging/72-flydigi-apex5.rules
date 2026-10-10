@@ -4,3 +4,8 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="37d7", ATTRS{idProduct}=="2501", TAG+="uacc
 # The screen chip's bootloader port (command 31 for chip 4), for picture uploads.
 # ModemManager must leave it alone: it would probe the port with AT commands.
 KERNEL=="ttyACM*", ATTRS{idVendor}=="ffaa", ATTRS{idProduct}=="5555", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+# DualSense mode: the app creates a virtual DualSense through uhid, and games
+# read its input nodes. The uhid module is loaded at boot by
+# /etc/modules-load.d/uhid.conf, which the app installs alongside this file.
+KERNEL=="uhid", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{name}=="Wireless Controller*", TAG+="uaccess"

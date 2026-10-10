@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::bridge::{self, Bridge};
 use crate::device::{self, Flags, Info, InputState, Settings};
 use crate::evdev;
 use crate::hid::Device;
@@ -41,6 +42,8 @@ pub enum Cmd {
     SetThirdParty(bool),
     /// Run the grip motors at (left, right) 0..255 for a moment, then stop.
     TestRumble(u8, u8),
+    /// Present the pad to games as a DualSense, or stop.
+    DualSense(bool),
     /// Send a picture to the screen. Lets go of the pad, which restarts at
     /// the end; ends with `ScreenDone`.
     UploadScreen(Upload),
@@ -73,23 +76,26 @@ pub struct Handle {
     pub tx: Sender<Cmd>,
     pub rx: Receiver<Event>,
     pub input: Arc<Mutex<Live>>,
+    pub ds5: Arc<Mutex<bridge::Status>>,
 }
 
 pub fn spawn(repaint: impl Fn() + Send + 'static) -> Handle {
     let (tx, cmd_rx) = channel();
     let (ev_tx, rx) = channel();
     let input = Arc::new(Mutex::new(Live::default()));
-    let shared = input.clone();
+    let ds5 = Arc::new(Mutex::new(bridge::Status::default()));
+    let (shared, ds5_shared) = (input.clone(), ds5.clone());
     thread::spawn(move || {
         Worker {
             ev: Some(ev_tx),
             repaint: Some(Box::new(repaint)),
             input: shared,
+            ds5: ds5_shared,
             ..Worker::default()
         }
         .run(cmd_rx)
     });
-    Handle { tx, rx, input }
+    Handle { tx, rx, input, ds5 }
 }
 
 #[derive(Default)]
@@ -100,8 +106,14 @@ struct Worker {
     dev: Option<Device>,
     profile: Option<Profile>,
     led: Option<LedConfig>,
+    /// The input tester is reading the pad.
     streaming: bool,
-    stream_was_on: bool,
+    /// While the tester or the bridge keeps the raw stream on: whether it
+    /// was on before they did.
+    raw_held: Option<bool>,
+    /// DualSense mode.
+    bridge: Option<Bridge>,
+    ds5: Arc<Mutex<bridge::Status>>,
     /// The gamepad node, read alongside the stream for the tester.
     pad: Option<evdev::Pad>,
     /// Last transport flags read, and when.
@@ -128,7 +140,7 @@ impl Worker {
                 last_try = Instant::now();
                 self.connect();
             }
-            let timeout = if self.streaming {
+            let timeout = if self.streaming || self.bridge.is_some() {
                 Duration::from_millis(2)
             } else {
                 Duration::from_millis(200)
@@ -141,6 +153,8 @@ impl Worker {
                     self.send(Event::ScreenDone(r));
                     last_try = Instant::now();
                 }
+                // the virtual pad lives on while the real one is away
+                Ok(Cmd::DualSense(false)) if self.dev.is_none() => self.stop_bridge(),
                 Ok(cmd) => {
                     if self.dev.is_none() {
                         self.send(Event::Error("геймпад не подключён".into()));
@@ -156,8 +170,11 @@ impl Worker {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            if self.streaming {
+            if (self.streaming || self.bridge.is_some()) && self.dev.is_some() {
                 self.pump_input();
+            }
+            if self.bridge.is_some() {
+                self.pump_bridge();
             }
             // While apps may take the pad over, keep an eye on who holds it.
             if let Some((f, at)) = &self.flags
@@ -169,13 +186,10 @@ impl Worker {
                 self.fail(e);
             }
         }
-        // App closing: stop the stream if we started it.
-        if self.streaming
-            && !self.stream_was_on
-            && let Some(d) = self.dev.as_mut()
-        {
-            let _ = device::set_stream(d, false);
-        }
+        // App closing: the virtual pad goes, and the stream if we started it.
+        self.stop_bridge();
+        self.streaming = false;
+        let _ = self.release_stream();
     }
 
     fn fail(&mut self, e: anyhow::Error) {
@@ -183,8 +197,12 @@ impl Worker {
         if msg.contains("device read failed") || msg.contains("device write failed") {
             self.dev = None;
             self.streaming = false;
+            self.raw_held = None;
             self.pad = None;
             self.flags = None;
+            if let Some(b) = self.bridge.as_mut() {
+                b.detach();
+            }
             self.input.lock().unwrap().stop();
             self.send(Event::Disconnected(msg));
         } else {
@@ -199,7 +217,7 @@ impl Worker {
                     self.dev = Some(d);
                     self.bound = [None; 2];
                     self.send(Event::Connected(info));
-                    if let Err(e) = self.refresh() {
+                    if let Err(e) = self.refresh().and_then(|_| self.reattach_bridge()) {
                         self.fail(e);
                     }
                 }
@@ -305,6 +323,9 @@ impl Worker {
     /// outlives profile switches. With `clear` a side stored as Normal is
     /// actively cleared, and one going to Vibration loses its old effect.
     fn engage(&mut self, p: &Profile, clear: bool) -> Result<()> {
+        if self.bridge.is_some() {
+            return Ok(()); // in DualSense mode the game drives the triggers
+        }
         for (side, id) in [(0, device::SIDE_LEFT), (1, device::SIDE_RIGHT)] {
             let f = p.force(side);
             let vibration = f.mode == profile::MODE_VIBRATION;
@@ -468,12 +489,22 @@ impl Worker {
                 run.and(stop)?;
             }
             Cmd::UploadScreen(_) => unreachable!("run() takes it"),
+            Cmd::DualSense(true) if self.bridge.is_none() => {
+                self.bridge = Some(Bridge::start(self.ds5.clone())?);
+                if let Err(e) = self.reattach_bridge() {
+                    self.stop_bridge();
+                    return Err(e);
+                }
+                self.send(Event::Message("Режим DualSense включён".into()));
+            }
+            Cmd::DualSense(true) => {}
+            Cmd::DualSense(false) => {
+                self.stop_bridge();
+                self.send(Event::Message("Режим DualSense выключен".into()));
+            }
             Cmd::Stream(on) => {
                 if on && !self.streaming {
-                    self.stream_was_on = device::read_flags(self.dev())?.raw_data;
-                    if !self.stream_was_on {
-                        device::set_stream(self.dev(), true)?;
-                    }
+                    self.hold_stream()?;
                     self.streaming = true;
                     self.install_input_hook();
                     // Best effort: without it the tester shows the sensor only.
@@ -483,10 +514,8 @@ impl Worker {
                 } else if !on && self.streaming {
                     self.streaming = false;
                     self.pad = None;
-                    if !self.stream_was_on {
-                        device::set_stream(self.dev(), false)?;
-                    }
                     self.input.lock().unwrap().stop();
+                    self.release_stream()?;
                 }
             }
         }
@@ -507,11 +536,15 @@ impl Worker {
             if !device::read_info(d)?.wired {
                 anyhow::bail!("картинку можно загрузить только по кабелю");
             }
-            if self.streaming && !self.stream_was_on {
+            if self.raw_held == Some(false) {
                 device::set_stream(d, false)?;
             }
         }
         self.streaming = false;
+        self.raw_held = None;
+        if let Some(b) = self.bridge.as_mut() {
+            b.detach();
+        }
         self.pad = None;
         self.flags = None;
         self.input.lock().unwrap().stop();
@@ -532,6 +565,8 @@ impl Worker {
         }));
     }
 
+    /// Vendor reports go to the tester and, for motion, to the bridge; the
+    /// gamepad node goes to the tester.
     fn pump_input(&mut self) {
         let mut got = false;
         loop {
@@ -539,8 +574,13 @@ impl Worker {
             match r {
                 Ok(Some(raw)) => {
                     if let Some(s) = InputState::parse(&raw) {
-                        self.input.lock().unwrap().record(s);
-                        got = true;
+                        if self.streaming {
+                            self.input.lock().unwrap().record(s);
+                            got = true;
+                        }
+                        if let Some(b) = self.bridge.as_mut() {
+                            b.motion(&s);
+                        }
                     }
                 }
                 Ok(None) => break,
@@ -564,6 +604,103 @@ impl Worker {
         }
         if got && let Some(r) = &self.repaint {
             r();
+        }
+    }
+
+    /// Keep the raw stream on for the tester or the bridge.
+    fn hold_stream(&mut self) -> Result<()> {
+        if self.raw_held.is_none() {
+            let was = device::read_flags(self.dev())?.raw_data;
+            if !was {
+                device::set_stream(self.dev(), true)?;
+            }
+            self.raw_held = Some(was);
+        }
+        Ok(())
+    }
+
+    /// Turn the raw stream back off once neither needs it, if we turned it on.
+    fn release_stream(&mut self) -> Result<()> {
+        if self.streaming || self.bridge.is_some() {
+            return Ok(());
+        }
+        if self.raw_held.take() == Some(false)
+            && let Some(d) = self.dev.as_mut()
+        {
+            device::set_stream(d, false)?;
+        }
+        Ok(())
+    }
+
+    /// The real pad is (back) here: feed the virtual one from it and give it
+    /// the effects the game set meanwhile.
+    fn reattach_bridge(&mut self) -> Result<()> {
+        if self.bridge.is_none() {
+            return Ok(());
+        }
+        self.hold_stream()?;
+        let path = self.dev().path.clone();
+        let b = self.bridge.as_mut().expect("checked");
+        b.attach(&path);
+        let replay = b.replay();
+        self.act(replay)
+    }
+
+    fn pump_bridge(&mut self) {
+        let rumble = self
+            .profile
+            .as_ref()
+            .is_none_or(|p| p.grip_vibration().master);
+        let Some(b) = self.bridge.as_mut() else {
+            return;
+        };
+        let actions = match b.pump(rumble) {
+            Ok(a) => a,
+            Err(e) => {
+                self.stop_bridge();
+                self.send(Event::Error(format!("режим DualSense остановлен: {e:#}")));
+                return;
+            }
+        };
+        if self.dev.is_some()
+            && let Err(e) = self.act(actions)
+        {
+            self.fail(e);
+        }
+    }
+
+    /// Send the game's effects to the pad, without waiting for answers: the
+    /// game can change them dozens of times a second.
+    fn act(&mut self, actions: Vec<bridge::Action>) -> Result<()> {
+        for a in actions {
+            match a {
+                bridge::Action::Trigger(side, e) => {
+                    let id = [device::SIDE_LEFT, device::SIDE_RIGHT][side];
+                    self.dev()
+                        .send(device::trigger_packet(id, e.mode, &e.params))?;
+                }
+                bridge::Action::Rumble(l, r) => device::rumble(self.dev(), l, r)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove the virtual pad and give the triggers back to the profile.
+    fn stop_bridge(&mut self) {
+        if self.bridge.take().is_none() {
+            return;
+        }
+        if self.dev.is_none() {
+            return;
+        }
+        let r = device::rumble(self.dev(), 0, 0)
+            .and_then(|_| self.release_stream())
+            .and_then(|_| match self.profile.clone() {
+                Some(p) => self.engage(&p, true),
+                None => Ok(()),
+            });
+        if let Err(e) = r {
+            self.fail(e);
         }
     }
 }

@@ -355,11 +355,81 @@ fn screen_upload(file: &str, rest: &[&str]) -> Result<()> {
     })
 }
 
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn on_signal(_: libc::c_int) {
+    STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// DualSense mode without the window, until Ctrl-C: the same worker the app
+/// runs, so the pad gets its triggers back and the stream is restored.
+fn ds5() -> Result<()> {
+    use apex5::worker::{self, Cmd, Event};
+    let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    // SAFETY: the handler only stores to an atomic.
+    unsafe {
+        libc::signal(libc::SIGINT, handler);
+        libc::signal(libc::SIGTERM, handler);
+    }
+    let h = worker::spawn(|| {});
+    let mut asked = false;
+    let mut last = String::new();
+    while !STOP.load(std::sync::atomic::Ordering::SeqCst) {
+        while let Ok(ev) = h.rx.try_recv() {
+            match ev {
+                Event::Connected(info) => {
+                    println!("pad: Flydigi {}", info.model());
+                    if !asked {
+                        let _ = h.tx.send(Cmd::DualSense(true));
+                        asked = true;
+                    }
+                }
+                Event::Disconnected(m) => println!("pad: {m}"),
+                Event::Message(m) => println!("{m}"),
+                Event::Error(m) => eprintln!("error: {m}"),
+                _ => {}
+            }
+        }
+        let st = h.ds5.lock().unwrap().clone();
+        let side = |i: usize| match &st.effects[i] {
+            None => "-".to_string(),
+            Some((e, a)) => format!(
+                "{} -> {}",
+                apex5::ds5::describe(e),
+                a.as_ref()
+                    .map(apex5::ds5::describe_apex)
+                    .unwrap_or_else(|| "unchanged".into())
+            ),
+        };
+        let line = format!(
+            "ds5 on={} opened={} pad={} | LT: {} | RT: {}",
+            st.on,
+            st.opened,
+            st.pad,
+            side(0),
+            side(1)
+        );
+        if line != last {
+            println!("{line}");
+            last = line;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = h.tx.send(Cmd::DualSense(false));
+    let worker::Handle { tx, rx, .. } = h;
+    drop(tx);
+    // the worker cleans up and exits, dropping its end
+    while rx.recv().is_ok() {}
+    println!("stopped");
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     // Only the gamepad node: the GUI may keep the vendor node open.
     match a.as_slice() {
+        ["ds5"] => return ds5(),
         ["keys"] => return keys(10),
         ["keys", secs] => return keys(secs.parse()?),
         ["screen", "preview", file, out, rest @ ..] => return screen_preview(file, out, rest),
@@ -504,7 +574,7 @@ fn main() -> Result<()> {
         }
         _ => {
             bail!(
-                "usage: apex5ctl info | input [seconds] | keys [seconds] | profile ... | led ... | screen ..."
+                "usage: apex5ctl info | input [seconds] | keys [seconds] | ds5 | profile ... | led ... | screen ..."
             )
         }
     }

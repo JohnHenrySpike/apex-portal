@@ -324,10 +324,16 @@ pub const BUTTONS: [(&str, usize, u8); 27] = [
 pub const SIDE_LEFT: u8 = 1;
 pub const SIDE_RIGHT: u8 = 2;
 
-/// Send one trigger's effect live (command 81, no checksum, [4]=10), as
-/// Space Station builds it from the stored effect. Vibration (5) is not
-/// sent this way (see `bind_trigger`); it and unknown modes clear the side.
+/// Send one trigger's effect live and wait for the pad's answer.
 pub fn engage_trigger(dev: &mut Device, side: u8, mode: u8, p: &[u8; 10]) -> Result<()> {
+    dev.request(trigger_packet(side, mode, p), T, |_| true)?;
+    Ok(())
+}
+
+/// One trigger's live effect (command 81, no checksum, [4]=10), as Space
+/// Station builds it from the stored effect. Vibration (5) is not sent this
+/// way (see `bind_trigger`); it and unknown modes clear the side.
+pub fn trigger_packet(side: u8, mode: u8, p: &[u8; 10]) -> [u8; 32] {
     let at_least_one = |v: u8| v.max(1);
     let payload: Vec<u8> = match mode {
         1 => vec![1, side, 1, p[0], at_least_one(p[1]), (p[4] == 1) as u8],
@@ -356,8 +362,7 @@ pub fn engage_trigger(dev: &mut Device, side: u8, mode: u8, p: &[u8; 10]) -> Res
     };
     let mut pkt = build(81, &payload, false);
     pkt[4] = 10;
-    dev.request(pkt, T, |_| true)?;
-    Ok(())
+    pkt
 }
 
 /// Bind the game's grip rumble into one trigger (command 82, [4]=11), or
