@@ -71,14 +71,18 @@ fn info(dev: &mut Device) -> Result<()> {
     let p = profile::read(dev, st.active)?;
     let g = p.grip_vibration();
     println!(
-        "  title {:?} proto {:#06x} tag {}  grip-rumble master={} L={} R={}",
+        "  title {:?} proto {:#06x} tag {}  grip-rumble master={}",
         p.title(),
         p.proto_version(),
         p.data_version(),
         g.master,
-        g.left,
-        g.right
     );
+    for (name, m) in [("L", g.left), ("R", g.right)] {
+        println!(
+            "  grip {name}: on={} window {}..{} scale {}%",
+            m.on, m.min, m.max, m.scale
+        );
+    }
     for side in 0..2 {
         println!("  stick {side}: {:?}", p.stick(side));
         println!(

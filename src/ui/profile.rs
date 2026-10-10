@@ -2,8 +2,9 @@
 
 use apex5::device::InputState;
 use apex5::profile::{
-    self, ForceEffect, Macro, MacroStep, PAD_KEYS, Profile, STICK_PRESETS, TARGET_IDENTITY,
-    TARGET_KEYBOARD, TARGET_MACRO, XINPUT_TARGETS, key_name,
+    self, FORCE_MODES, ForceEffect, GripMotor, MODE_SNIPER, MODE_VIBRATION, Macro, MacroStep,
+    PAD_KEYS, Profile, STICK_PRESETS, TARGET_IDENTITY, TARGET_KEYBOARD, TARGET_MACRO,
+    XINPUT_TARGETS, key_name,
 };
 use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
@@ -172,7 +173,7 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
                     }
                     if ui
                         .add(egui::Button::new(RichText::new("Заводские").color(DIM)).frame(false))
-                        .on_hover_text("Вернуть заводские значения этого профиля (вибрация не меняется). Нужно будет применить.")
+                        .on_hover_text("Вернуть заводские значения этого профиля, вибрацию тоже. Нужно будет применить.")
                         .clicked()
                         && let Some(e) = app.edit.as_mut()
                     {
@@ -951,11 +952,14 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
 
 // ------------------------------------------------------------------ triggers
 
-const MODES: [(u8, &str, &str); 4] = [
+// Space Station's own labels for 2 and 3 are swapped against the modes.
+const MODES: [(u8, &str, &str); 6] = [
     (0, "Обычный", "Курок свободный"),
     (1, "Гоночный", "Постоянное сопротивление"),
     (3, "Прорыв", "Упор, который продавливается"),
     (4, "Блокировка", "Жёсткий упор, короткий ход"),
+    (MODE_SNIPER, "Очередь", "Дрожит после точки хода"),
+    (MODE_VIBRATION, "Вибрация игры", "Вибрация рукояток в курке"),
 ];
 
 fn triggers(p: &mut Profile, ui: &mut egui::Ui) {
@@ -976,16 +980,18 @@ fn triggers(p: &mut Profile, ui: &mut egui::Ui) {
     ui.add_space(8.0);
     hint(
         ui,
-        "Сопротивление начинает работать после «Применить». Вибрационные режимы курков приложение не включает.",
+        "Режимы курков начинают работать после «Применить». «Вибрация игры» держится, пока геймпад \
+         подключён: если сменить профиль кнопкой на геймпаде, она останется до переподключения \
+         или до смены профиля в приложении.",
     );
     ui.add_space(12.0);
     grip_vibration_card(p, ui);
 }
 
-/// Grip rumble from games, on or off for this profile.
+/// Grip rumble from games: on or off, and each motor's window and strength.
 fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
     let g = p.grip_vibration();
-    let mut on = g.master && (g.left || g.right);
+    let mut on = g.master && (g.left.on || g.right.on);
     card_titled(ui, "Вибрация рукояток", |ui| {
         if widgets::toggle_row(
             ui,
@@ -995,12 +1001,80 @@ fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
         ) {
             p.set_grip_vibration(on);
         }
+        ui.add_space(8.0);
+        ui.add_enabled_ui(on, |ui| {
+            ui.spacing_mut().slider_width = ((ui.available_width() - 150.0) / 2.0 - 70.0).max(80.0);
+            let mut motors = [g.left, g.right];
+            egui::Grid::new("grip_motors")
+                .num_columns(3)
+                .spacing([14.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("");
+                    ui.label(RichText::new("Левый мотор").color(DIM));
+                    ui.label(RichText::new("Правый мотор").color(DIM));
+                    ui.end_row();
+                    let row = |ui: &mut egui::Ui,
+                               name: &str,
+                               tip: &str,
+                               motors: &mut [GripMotor; 2],
+                               field: fn(&mut GripMotor) -> &mut u8,
+                               slider: fn(&mut u8) -> egui::Slider<'_>| {
+                        ui.label(RichText::new(name).color(DIM)).on_hover_text(tip);
+                        for m in motors.iter_mut() {
+                            ui.add(slider(field(m)));
+                        }
+                        ui.end_row();
+                    };
+                    row(
+                        ui,
+                        "Сила",
+                        "Какая доля вибрации игры доходит до мотора. В Space Station это «сила вибрации рукояток», с завода 50%.",
+                        &mut motors,
+                        |m| &mut m.scale,
+                        |v| egui::Slider::new(v, 1..=100).suffix("%"),
+                    );
+                    row(
+                        ui,
+                        "Минимум",
+                        "Слабее этого мотор не работает, если игра вообще вибрирует.",
+                        &mut motors,
+                        |m| &mut m.min,
+                        level_slider,
+                    );
+                    row(
+                        ui,
+                        "Максимум",
+                        "Сильнее этого мотор не работает.",
+                        &mut motors,
+                        |m| &mut m.max,
+                        level_slider,
+                    );
+                });
+            for (side, m) in motors.into_iter().enumerate() {
+                if m != [g.left, g.right][side] {
+                    p.set_grip_motor(side, m);
+                }
+            }
+        });
         ui.add_space(4.0);
         hint(
             ui,
-            "В геймпад попадает после «Применить». Силу вибрации приложение не меняет; проверить моторы можно на вкладке «Тест ввода».",
+            "В геймпад попадает после «Применить». Проверить моторы можно на вкладке «Тест ввода».",
         );
     });
+}
+
+/// A 0..255 rumble level shown in percent.
+fn level_slider(v: &mut u8) -> egui::Slider<'_> {
+    egui::Slider::new(v, 0..=255)
+        .custom_formatter(|v, _| format!("{:.0}%", v / 2.55))
+        .custom_parser(|t| {
+            t.trim_end_matches('%')
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .map(|p| p * 2.55)
+        })
 }
 
 fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
@@ -1027,20 +1101,16 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
             }
             ui.add_space(12.0);
 
-            ui.label(
-                RichText::new("Сопротивление")
-                    .font(theme::medium(14.5))
-                    .color(TEXT),
-            );
+            ui.label(RichText::new("Режим").font(theme::medium(14.5)).color(TEXT));
             let mut f = p.force(side);
-            if !apex5::safety::RESISTANCE_MODES.contains(&f.mode) {
+            if f.mode >= FORCE_MODES {
                 ui.label(
-                RichText::new(format!(
-                    "В профиле записан вибрационный режим ({}). Приложение его не включает; можно заменить на один из режимов ниже.",
-                    f.mode
-                ))
-                .color(WARN),
-            );
+                    RichText::new(format!(
+                        "В профиле записан неизвестный режим ({}). Его можно заменить на один из режимов ниже.",
+                        f.mode
+                    ))
+                    .color(WARN),
+                );
             }
             let before = f;
             let gap = 6.0;
@@ -1059,17 +1129,56 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
             }
             ui.add_space(6.0);
             ui.spacing_mut().slider_width = (ui.available_width() - 170.0).max(100.0);
-            let pr = &mut f.params;
+            let mode = f.mode;
+            let (pr, bind) = (&mut f.params, &mut f.bind);
+            let row = |ui: &mut egui::Ui, name: &str, tip: &str, slider: egui::Slider<'_>| {
+                ui.label(RichText::new(name).color(DIM)).on_hover_text(tip);
+                ui.add(slider);
+                ui.end_row();
+            };
             egui::Grid::new(("force", side))
                 .num_columns(2)
                 .spacing([14.0, 8.0])
-                .show(ui, |ui| match f.mode {
+                .show(ui, |ui| match mode {
                     1 => {
                         ui.label(RichText::new("Начало").color(DIM));
                         ui.add(egui::Slider::new(&mut pr[0], 0..=192));
                         ui.end_row();
                         ui.label(RichText::new("Сила").color(DIM));
                         ui.add(egui::Slider::new(&mut pr[1], 1..=255));
+                        ui.end_row();
+                    }
+                    MODE_SNIPER => {
+                        let [start, press, strength, freq, ..] = pr;
+                        row(
+                            ui,
+                            "Начало",
+                            "С какого места хода курок начинает дрожать.",
+                            egui::Slider::new(start, 0..=192),
+                        );
+                        row(
+                            ui,
+                            "Сила нажатия",
+                            "Насколько сильно нужно нажать в этой точке, чтобы дрожь началась.",
+                            egui::Slider::new(press, 1..=255),
+                        );
+                        row(
+                            ui,
+                            "Сила",
+                            "Сила дрожи.",
+                            egui::Slider::new(strength, 1..=255),
+                        );
+                        row(
+                            ui,
+                            "Частота",
+                            "Частота дрожи.",
+                            egui::Slider::new(freq, 1..=255),
+                        );
+                        ui.label(RichText::new("Учитывать нажатие").color(DIM));
+                        let mut m = pr[4] == 1;
+                        if widgets::toggle(ui, &mut m).changed() {
+                            pr[4] = m as u8;
+                        }
                         ui.end_row();
                     }
                     3 => {
@@ -1093,6 +1202,33 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         ui.label(RichText::new("Точка упора").color(DIM));
                         ui.add(egui::Slider::new(&mut pr[0], 20..=200));
                         ui.end_row();
+                    }
+                    MODE_VIBRATION => {
+                        let [stroke, freq, ..] = pr;
+                        row(
+                            ui,
+                            "Ход",
+                            "На каком отрезке хода курок вибрирует.",
+                            egui::Slider::new(stroke, 1..=200),
+                        );
+                        row(
+                            ui,
+                            "Частота",
+                            "Частота вибрации курка.",
+                            egui::Slider::new(freq, 1..=255),
+                        );
+                        row(
+                            ui,
+                            "Порог",
+                            "Вибрация рукояток слабее порога в курок не попадает.",
+                            egui::Slider::new(&mut bind.block, 1..=255),
+                        );
+                        row(
+                            ui,
+                            "Сила",
+                            "Коэффициент силы вибрации курка.",
+                            egui::Slider::new(&mut bind.scale, 0..=200),
+                        );
                     }
                     _ => {}
                 });
@@ -1174,9 +1310,23 @@ fn defaults(mode: u8, cur: ForceEffect) -> ForceEffect {
             params[4] = 1;
         }
         4 => params[..3].copy_from_slice(&[100, 255, 1]),
+        MODE_SNIPER => {
+            params[..4].copy_from_slice(&[64, 1, 160, 60]);
+            params[4] = 1;
+        }
+        // the bind bytes keep the last Vibration settings (factory: stroke
+        // 100, frequency 70, block 10, scale 10)
+        MODE_VIBRATION => {
+            params[0] = cur.bind.params[0].max(1);
+            params[1] = cur.bind.params[3].max(1);
+        }
         _ => params = cur.params,
     }
-    ForceEffect { mode, params }
+    ForceEffect {
+        mode,
+        params,
+        bind: cur.bind,
+    }
 }
 
 // ------------------------------------------------------------------ gyro

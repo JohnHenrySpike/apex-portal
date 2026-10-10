@@ -926,10 +926,21 @@ document whether 172 switches the slot (MP:716-723).
 
 ---
 
-## 8. VIBRATION-RELATED (the app must never enable vibration)
+## 8. VIBRATION-RELATED
 
 Everything in the profile and command scope that enables, configures or triggers rumble or
 vibration.
+
+**Policy change (2026-10-10).** The "never enable vibration" rule below kept the pad quiet at
+night; it was never a hardware risk, and it is lifted. The app now writes trigger modes 2 and 5
+and the grip motors' min/max/scale, and sends the live effects the way Space Station does
+(`ControllerRepository.CreateForceAdapterConfig`): modes 0-4 as 81
+`[1, side, mode, …]`, mode 5 **only** as 82 `[side, 2, filter, scale, bind p0..p3]`, never as
+81 mode 5. A bind is released with 82 `[side, 0, filter, scale, 0,0,0,0]`, the form the service
+uses when a game from the trigger list exits (`AdapterTriggerRunner.OnCloseGameVibMode`). The
+worker releases it whenever the loaded profile's side is not mode 5 and the bind is not known to
+be off. Copies and factory resets now carry the vibration bytes too. The tables below are kept
+as the reference for what each byte does.
 
 ### 8.1 Profile fields: what to leave alone and what to force off
 

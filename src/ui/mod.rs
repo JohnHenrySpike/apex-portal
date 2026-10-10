@@ -78,15 +78,27 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
     egui::Panel::left("nav")
         .resizable(false)
         .exact_size(232.0)
-        .frame(egui::Frame::new().fill(SIDEBAR).inner_margin(egui::Margin::symmetric(16, 20)))
+        .frame(
+            egui::Frame::new()
+                .fill(SIDEBAR)
+                .inner_margin(egui::Margin::symmetric(16, 20)),
+        )
         .show(ui, |ui| {
             // Wordmark.
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                ui.label(RichText::new("APEX").font(theme::bold(24.0)).color(theme::SILVER));
+                ui.label(
+                    RichText::new("APEX")
+                        .font(theme::bold(24.0))
+                        .color(theme::SILVER),
+                );
                 ui.label(RichText::new("5").font(theme::bold(24.0)).color(accent()));
             });
-            ui.label(RichText::new("C O N T R O L").font(theme::medium(10.5)).color(FAINT));
+            ui.label(
+                RichText::new("C O N T R O L")
+                    .font(theme::medium(10.5))
+                    .color(FAINT),
+            );
             ui.add_space(18.0);
 
             device_badge(app, ui);
@@ -100,12 +112,16 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
                     widgets::icon(ui.painter(), rect, Icon::Shield, FAINT);
-                    ui.label(RichText::new("Вибрация заблокирована").size(12.0).color(FAINT));
+                    ui.label(
+                        RichText::new("Опасные команды заблокированы")
+                            .size(12.0)
+                            .color(FAINT),
+                    );
                 })
                 .response
                 .on_hover_text(
-                    "Приложение никогда не отправляет команды вибрации и вибрационные режимы курков. \
-                     Опасные команды (прошивка, сброс, смена режима) тоже заблокированы.",
+                    "Приложение не отправляет команды прошивки, сброса к заводским, смены режима \
+                     и типа устройства. Каждый пакет проверяется по белому списку.",
                 );
             });
         });
@@ -474,7 +490,7 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui, info: &device::Info) {
     card_titled(ui, "Вибрация от игр", |ui| {
         if let Some(p) = &app.pad_profile {
             let g = p.grip_vibration();
-            let on = g.master && (g.left || g.right);
+            let on = g.master && (g.left.on || g.right.on);
             ui.horizontal(|ui| {
                 pill(
                     ui,
@@ -718,7 +734,7 @@ fn reset_card(app: &mut App, ui: &mut egui::Ui) {
         hint(
             ui,
             "Вернуть заводские значения во всех четырёх профилях и сохранить их в геймпаде: \
-             кнопки, макросы, стики, курки, гироскоп и названия. Вибрация рукояток не меняется. \
+             кнопки, макросы, стики, курки, вибрация, гироскоп и названия. \
              Несохранённые изменения пропадут.",
         );
         ui.add_space(4.0);

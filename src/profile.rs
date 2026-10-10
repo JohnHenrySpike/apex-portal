@@ -20,10 +20,12 @@ const KEYS: usize = 13;
 const STICK_CORE: [usize; 2] = [109, 116];
 const TRIGGER_TRAVEL: [usize; 2] = [123, 130];
 const GYRO: usize = 137;
-const GRIP_VIB: usize = 145; // ..154; only the on/off switches change
+const GRIP_VIB: usize = 145; // ..154
 /// Grip-rumble switches: master, left, right. 0 = on, 0xFF = off. Space
 /// Station flips left and right; the spec calls 145 the master.
 const GRIP_SWITCHES: [usize; 3] = [145, 146, 150];
+/// Each grip motor: switch, then min, max, scale.
+const GRIP_MOTORS: [usize; 2] = [146, 150];
 const FORCE: [usize; 2] = [185, 205];
 const DATA_VERSION: usize = 225;
 const MACRO_PAGE: usize = 230;
@@ -132,6 +134,25 @@ pub struct Gyro {
 pub struct ForceEffect {
     pub mode: u8,
     pub params: [u8; 10],
+    /// Game rumble into the trigger; played only in mode 5.
+    pub bind: TriggerBind,
+}
+
+/// Modes 0..=5: Normal, Race, Sniper (UI "Recoil", vibrates past a
+/// point), Recoil (UI "Sniper"), Lock, Vibration (game rumble).
+pub const FORCE_MODES: u8 = 6;
+pub const MODE_SNIPER: u8 = 2;
+pub const MODE_VIBRATION: u8 = 5;
+
+/// The rumble-to-trigger bind as live command 82 sends it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TriggerBind {
+    /// Grip rumble below this does not reach the trigger (1..255).
+    pub block: u8,
+    /// Strength coefficient (0..200).
+    pub scale: u8,
+    /// stroke, pressure, strength, frequency, 0.
+    pub params: [u8; 5],
 }
 
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -152,11 +173,22 @@ pub struct MacroStep {
 pub const MACRO_MAX: usize = 5;
 pub const MACRO_STEPS_MAX: usize = 128;
 
-/// Grip-rumble state. The app only flips its on/off switches.
+/// Grip rumble: the master switch and the two motors.
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct GripVibration {
     pub master: bool,
-    pub left: bool,
-    pub right: bool,
+    pub left: GripMotor,
+    pub right: GripMotor,
+}
+
+/// One grip motor. The pad fits the game's rumble into min..max, scaled
+/// by `scale` % (Space Station offers 1..100, factory 50).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct GripMotor {
+    pub on: bool,
+    pub min: u8,
+    pub max: u8,
+    pub scale: u8,
 }
 
 fn stick_nodes(center: f64, edge: f64, p1: (u8, u8), p2: (u8, u8)) -> Vec<(f64, f64)> {
@@ -401,31 +433,62 @@ impl Profile {
         }
     }
 
-    // ---- grip vibration (read only)
+    // ---- grip vibration
     pub fn grip_vibration(&self) -> GripVibration {
-        let b = &self.blob[GRIP_VIB..];
+        let b = &self.blob;
+        let motor = |o: usize| GripMotor {
+            on: b[o] == 0,
+            min: b[o + 1],
+            max: b[o + 2],
+            scale: b[o + 3],
+        };
         GripVibration {
-            master: b[0] == 0,
-            left: b[1] == 0,
-            right: b[5] == 0,
+            master: b[GRIP_VIB] == 0,
+            left: motor(GRIP_MOTORS[0]),
+            right: motor(GRIP_MOTORS[1]),
         }
+    }
+    /// One motor's window and strength; min and max are swapped if crossed,
+    /// as Space Station's writer does. The switches stay.
+    pub fn set_grip_motor(&mut self, side: usize, m: GripMotor) {
+        let o = GRIP_MOTORS[side];
+        let (lo, hi) = (m.min.min(m.max), m.min.max(m.max));
+        self.blob[o + 1..o + 4].copy_from_slice(&[lo, hi, m.scale]);
     }
 
     // ---- stored adaptive trigger effect
     pub fn force(&self, side: usize) -> ForceEffect {
         let o = FORCE[side];
+        let b = &self.blob;
         ForceEffect {
-            mode: self.blob[o],
-            params: self.blob[o + 10..o + 20].try_into().unwrap(),
+            mode: b[o],
+            params: b[o + 10..o + 20].try_into().unwrap(),
+            bind: TriggerBind {
+                block: b[o + 2],
+                scale: b[o + 3],
+                params: b[o + 4..o + 9].try_into().unwrap(),
+            },
         }
     }
-    /// Only resistance modes (0,1,3,4); the bind half is never touched.
-    pub fn set_force(&mut self, side: usize, f: ForceEffect) {
-        if !crate::safety::RESISTANCE_MODES.contains(&f.mode) {
+    /// As Space Station writes it: Normal changes only the mode byte; the
+    /// bind type is 2 in Vibration and 0 otherwise, and leaving Vibration
+    /// keeps the bind bytes. Vibration keeps stroke and frequency in
+    /// params[0..2] and builds the bind from them.
+    pub fn set_force(&mut self, side: usize, mut f: ForceEffect) {
+        if f.mode >= FORCE_MODES {
             return;
         }
         let o = FORCE[side];
         self.blob[o] = f.mode;
+        if f.mode == MODE_VIBRATION {
+            let (stroke, freq) = (f.params[0].max(1), f.params[1].max(1));
+            f.params = [stroke, freq, 1, 90, 0, 0, 0, 0, 0, 0];
+            f.bind.params = [stroke, 1, 1, freq, 0];
+            self.blob[o + 2] = f.bind.block.max(1);
+            self.blob[o + 3] = f.bind.scale.min(200);
+            self.blob[o + 4..o + 9].copy_from_slice(&f.bind.params);
+        }
+        self.blob[o + 1] = if f.mode == MODE_VIBRATION { 2 } else { 0 };
         if f.mode != 0 {
             self.blob[o + 10..o + 20].copy_from_slice(&f.params);
         }
@@ -565,44 +628,10 @@ impl Profile {
         }
     }
 
-    /// Refuse any write that would change rumble state: grip vibration,
-    /// trigger motors, the rumble-to-trigger bind, or a vibrating effect mode.
-    /// The one change let through is a grip on/off switch set to 0 or 0xFF.
-    pub fn check_no_vibration_change(&self, original: &Profile) -> Result<()> {
-        let switched = |o: usize| GRIP_SWITCHES.contains(&o) && matches!(self.blob[o], 0 | 0xFF);
-        if (GRIP_VIB..183).any(|o| self.blob[o] != original.blob[o] && !switched(o)) {
-            bail!("запись отменена: изменились бы настройки вибрации");
-        }
-        for o in FORCE {
-            if self.blob[o + 1..o + 10] != original.blob[o + 1..o + 10] {
-                bail!("запись отменена: изменилась бы привязка вибрации к куркам");
-            }
-            let mode = self.blob[o];
-            if mode != original.blob[o] && !crate::safety::RESISTANCE_MODES.contains(&mode) {
-                bail!("запись отменена: вибрационный режим курка");
-            }
-        }
-        Ok(())
-    }
-
-    /// This profile's settings for `target`'s slot. What this app never
-    /// writes stays as `target` has it: grip vibration strengths (the on/off
-    /// switches do come along), the triggers' vibration binding, a trigger
-    /// mode that is not a resistance, and the data version.
+    /// This profile's settings for `target`'s slot, under its data version.
     pub fn onto(&self, target: &Profile) -> Profile {
         let mut b = self.blob.clone();
         let t = &target.blob;
-        for o in GRIP_VIB..183 {
-            if !(GRIP_SWITCHES.contains(&o) && matches!(b[o], 0 | 0xFF)) {
-                b[o] = t[o];
-            }
-        }
-        for o in FORCE {
-            b[o + 1..o + 10].copy_from_slice(&t[o + 1..o + 10]);
-            if !crate::safety::RESISTANCE_MODES.contains(&b[o]) {
-                b[o] = t[o];
-            }
-        }
         b[DATA_VERSION..DATA_VERSION + 2].copy_from_slice(&t[DATA_VERSION..DATA_VERSION + 2]);
         Profile {
             slot: target.slot,
@@ -610,10 +639,20 @@ impl Profile {
         }
     }
 
-    /// Factory content for this slot, keeping this profile's vibration bytes.
+    /// Refuse a profile whose trigger bytes the pad was never given by
+    /// Space Station: an unknown effect mode or bind type.
+    pub fn check_triggers(&self) -> Result<()> {
+        for o in FORCE {
+            if self.blob[o] >= FORCE_MODES || !matches!(self.blob[o + 1], 0 | 2) {
+                bail!("запись отменена: неизвестный режим курка");
+            }
+        }
+        Ok(())
+    }
+
+    /// Factory content for this slot, vibration included.
     pub fn factory_reset(&mut self) {
         let mut f = factory_blob(self.slot);
-        f[GRIP_VIB..225].copy_from_slice(&self.blob[GRIP_VIB..225]);
         f[DATA_VERSION..DATA_VERSION + 2]
             .copy_from_slice(&self.blob[DATA_VERSION..DATA_VERSION + 2]);
         self.blob = f;
@@ -652,7 +691,7 @@ pub fn read(dev: &mut Device, slot: u8) -> Result<Profile> {
 
 /// Write changed packets to the running slot; re-apply if macros changed.
 pub fn write(dev: &mut Device, new: &Profile, old: &Profile) -> Result<usize> {
-    new.check_no_vibration_change(old)?;
+    new.check_triggers()?;
     let n = blob::write(
         dev,
         CMD_WRITE_START,
@@ -833,52 +872,86 @@ mod tests {
     }
 
     #[test]
-    fn edits_never_touch_vibration() {
-        let orig = factory();
-        let mut p = orig.clone();
-        p.set_title("Test");
-        p.set_travel(0, 10, 200);
-        p.set_force(
-            0,
-            ForceEffect {
-                mode: 1,
-                params: [40, 100, 0, 0, 1, 0, 0, 0, 0, 0],
-            },
+    fn vibration_mode_builds_its_bind_as_space_station_does() {
+        let mut p = factory();
+        let mut f = p.force(0);
+        f.mode = MODE_VIBRATION;
+        f.params[..2].copy_from_slice(&[120, 60]);
+        f.bind.block = 30;
+        f.bind.scale = 15;
+        p.set_force(0, f);
+        assert_eq!(
+            p.blob[185..205],
+            [
+                5, 2, 30, 15, 120, 1, 1, 60, 0, 0, 120, 60, 1, 90, 0, 0, 0, 0, 0, 0
+            ]
         );
-        p.set_force(
-            1,
-            ForceEffect {
-                mode: 2,
-                params: [0; 10],
-            },
-        ); // ignored
-        assert_eq!(p.force(1).mode, 0);
-        p.check_no_vibration_change(&orig).unwrap();
-        let mut bad = orig.clone();
-        bad.blob[147] = 0;
-        assert!(bad.check_no_vibration_change(&orig).is_err());
+        p.check_triggers().unwrap();
+        // leaving Vibration drops the bind type and keeps the bind bytes
+        let mut f = p.force(0);
+        f.mode = 0;
+        p.set_force(0, f);
+        assert_eq!(p.blob[185..195], [0, 0, 30, 15, 120, 1, 1, 60, 0, 0]);
+        // the right trigger is untouched
+        assert_eq!(p.blob[205..225], factory().blob[205..225]);
+    }
+
+    #[test]
+    fn unknown_trigger_modes_are_refused() {
+        let mut p = factory();
+        let f = ForceEffect {
+            mode: 6,
+            ..p.force(1)
+        };
+        p.set_force(1, f);
+        assert_eq!(p.force(1).mode, 0, "set_force ignores it");
+        p.blob[FORCE[1]] = 6;
+        assert!(p.check_triggers().is_err());
+        let mut q = factory();
+        q.blob[FORCE[0] + 1] = 1;
+        assert!(q.check_triggers().is_err());
     }
 
     #[test]
     fn grip_vibration_switches_off_and_back_on() {
         let on = factory();
-        assert!(on.grip_vibration().master);
+        let g = on.grip_vibration();
+        assert!(g.master && g.left.on && g.right.on);
         let mut off = on.clone();
         off.set_grip_vibration(false);
         let g = off.grip_vibration();
-        assert!(!g.master && !g.left && !g.right);
-        off.check_no_vibration_change(&on).unwrap();
+        assert!(!g.master && !g.left.on && !g.right.on);
         let mut back = off.clone();
         back.set_grip_vibration(true);
         assert_eq!(back.blob, on.blob);
-        back.check_no_vibration_change(&off).unwrap();
-        // a switch may only be 0 or 0xFF
-        let mut odd = on.clone();
-        odd.blob[146] = 1;
-        assert!(odd.check_no_vibration_change(&on).is_err());
-        // the motor windows stay as they were
+        // the switches leave the motor windows alone
         assert_eq!(off.blob[147..150], on.blob[147..150]);
         assert_eq!(off.blob[151..183], on.blob[151..183]);
+    }
+
+    #[test]
+    fn grip_motor_window_and_strength() {
+        let mut p = factory();
+        assert_eq!(
+            p.grip_vibration().left,
+            GripMotor {
+                on: true,
+                min: 60,
+                max: 255,
+                scale: 50
+            }
+        );
+        p.set_grip_motor(
+            1,
+            GripMotor {
+                on: false, // switches are not this setter's business
+                min: 200,
+                max: 40,
+                scale: 80,
+            },
+        );
+        assert_eq!(p.blob[150..154], [0, 40, 200, 80]);
+        assert_eq!(p.blob[145..150], factory().blob[145..150]);
     }
 
     #[test]
@@ -944,24 +1017,20 @@ mod tests {
     }
 
     #[test]
-    fn a_copy_keeps_the_targets_vibration() {
-        let target = factory();
+    fn a_copy_brings_everything_but_the_data_version() {
+        let mut target = factory();
+        target.blob[DATA_VERSION..DATA_VERSION + 2].copy_from_slice(&[7, 9]);
         let mut source = factory();
         source.slot = 2;
         source.set_title("Шутер");
         source.set_grip_vibration(false);
-        for o in [147, 151, 186, 206] {
-            source.blob[o] ^= 0x5A; // strengths and trigger binding
-        }
-        source.blob[FORCE[0]] = 2; // recoil: vibration, never written
-        source.blob[FORCE[1]] = 3; // a resistance comes along
+        source.blob[147] = 10;
+        source.blob[FORCE[0]] = MODE_SNIPER;
         let p = source.onto(&target);
         assert_eq!(p.slot, 0);
         assert_eq!(p.title(), "Шутер");
-        assert!(p.check_no_vibration_change(&target).is_ok());
-        assert!(GRIP_SWITCHES.iter().all(|&o| p.blob[o] == 0xFF));
-        assert_eq!(p.blob[147], target.blob[147]);
-        assert_eq!(p.force(0).mode, target.force(0).mode);
-        assert_eq!(p.force(1).mode, 3);
+        assert_eq!(p.blob[DATA_VERSION..DATA_VERSION + 2], [7, 9]);
+        assert_eq!(p.blob[..DATA_VERSION], source.blob[..DATA_VERSION]);
+        assert_eq!(p.blob[DATA_VERSION + 2..], source.blob[DATA_VERSION + 2..]);
     }
 }

@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow, bail};
 use std::time::Duration;
 
 use crate::hid::{Device, Reply, build};
+use crate::profile::TriggerBind;
 
 const T: Duration = Duration::from_millis(600);
 
@@ -318,17 +319,28 @@ pub const BUTTONS: [(&str, usize, u8); 27] = [
     ("?", 3, 0x04),
 ];
 
-// ------------------------------------------------ live trigger resistance
+// ------------------------------------------------ live trigger effects
 
 pub const SIDE_LEFT: u8 = 1;
 pub const SIDE_RIGHT: u8 = 2;
 
-/// Send one trigger's effect live (command 81, no checksum, [4]=10).
-/// Vibrating modes are mapped to Normal here and refused again by `safety`.
+/// Send one trigger's effect live (command 81, no checksum, [4]=10), as
+/// Space Station builds it from the stored effect. Vibration (5) is not
+/// sent this way (see `bind_trigger`); it and unknown modes clear the side.
 pub fn engage_trigger(dev: &mut Device, side: u8, mode: u8, p: &[u8; 10]) -> Result<()> {
     let at_least_one = |v: u8| v.max(1);
     let payload: Vec<u8> = match mode {
         1 => vec![1, side, 1, p[0], at_least_one(p[1]), (p[4] == 1) as u8],
+        2 => vec![
+            1,
+            side,
+            2,
+            p[0],
+            at_least_one(p[1]),
+            at_least_one(p[2]),
+            at_least_one(p[3]),
+            (p[4] == 1) as u8,
+        ],
         3 => vec![
             1,
             side,
@@ -344,6 +356,31 @@ pub fn engage_trigger(dev: &mut Device, side: u8, mode: u8, p: &[u8; 10]) -> Res
     };
     let mut pkt = build(81, &payload, false);
     pkt[4] = 10;
+    dev.request(pkt, T, |_| true)?;
+    Ok(())
+}
+
+/// Bind the game's grip rumble into one trigger (command 82, [4]=11), or
+/// release it as Space Station does when a game exits: bind type 0, the
+/// same block and scale, no params. A bind outlives profile switches and
+/// lasts until the pad leaves the bus.
+pub fn bind_trigger(dev: &mut Device, side: u8, b: &TriggerBind, on: bool) -> Result<()> {
+    let payload = if on {
+        [
+            side,
+            2,
+            b.block,
+            b.scale,
+            b.params[0],
+            b.params[1],
+            b.params[2],
+            b.params[3],
+        ]
+    } else {
+        [side, 0, b.block, b.scale, 0, 0, 0, 0]
+    };
+    let mut pkt = build(82, &payload, false);
+    pkt[4] = 11;
     dev.request(pkt, T, |_| true)?;
     Ok(())
 }

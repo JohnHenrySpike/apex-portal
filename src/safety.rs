@@ -2,8 +2,9 @@
 //! written to the pad. Anything not explicitly allowed is refused.
 //!
 //! Grip rumble (0x12) only in SDL's form for the two grip motors, for the
-//! rumble test. Never allowed: rumble-to-trigger bind (82), vibrating
-//! trigger modes (81 mode 2/5), firmware/upgrade mode (31; the one way past
+//! rumble test. Trigger effects (81) and the rumble-to-trigger bind (82)
+//! only in the forms Space Station sends. Never allowed: firmware/upgrade
+//! mode (31; the one way past
 //! it is `SCREEN_UPLOAD_MODE` below), factory reset (253),
 //! reset-all-profiles (175), mode switch (27), restart (29), report
 //! rate (20), test floods (242/245), the HID picture family (208-211), the
@@ -21,8 +22,10 @@ pub const SCREEN_UPLOAD_MODE: [u8; 7] = [0x03, 0x5A, 0xA5, 0x1F, 0x03, 0x04, 0x2
 /// 4 is Space Station's "Turbo Function".
 pub const ALLOWED_SUB19: [u8; 7] = [1, 4, 5, 6, 7, 8, 9];
 
-/// Force-trigger modes that only resist: Normal, Race, Recoil(UI "Sniper"), Lock.
-pub const RESISTANCE_MODES: [u8; 4] = [0, 1, 3, 4];
+/// Force-trigger modes sent live with 81: Normal, Race, Sniper (UI
+/// "Recoil", vibrates), Recoil (UI "Sniper"), Lock. Vibration (5) goes as
+/// the 82 bind instead; a live 81 mode 5 buzzed with a bind present.
+pub const LIVE_MODES: [u8; 5] = [0, 1, 2, 3, 4];
 
 pub fn check(pkt: &[u8; 32]) -> Result<()> {
     let cmd = pkt[3];
@@ -48,10 +51,20 @@ pub fn check(pkt: &[u8; 32]) -> Result<()> {
         23 if p[0] <= 60 || p[0] == 180 => Ok(()),
         21..=23 => bail!("blocked: setting {cmd} value {} out of range", p[0]),
         24 => Ok(()), // nickname
-        // live force trigger: one side at a time, resistance modes only
+        // live force trigger: one side at a time
         81 => {
-            if p[0] != 1 || !(p[1] == 1 || p[1] == 2) || !RESISTANCE_MODES.contains(&p[2]) {
-                bail!("blocked: trigger mode {} vibrates or is malformed", p[2]);
+            if p[0] != 1 || !(p[1] == 1 || p[1] == 2) || !LIVE_MODES.contains(&p[2]) {
+                bail!(
+                    "blocked: trigger mode {} is not sent live or is malformed",
+                    p[2]
+                );
+            }
+            Ok(())
+        }
+        // rumble-to-trigger bind: one side, bound (2) or released (0)
+        82 => {
+            if pkt[4] != 11 || !(p[0] == 1 || p[0] == 2) || !matches!(p[1], 0 | 2) {
+                bail!("blocked: malformed trigger bind");
             }
             Ok(())
         }
@@ -63,7 +76,6 @@ pub fn check(pkt: &[u8; 32]) -> Result<()> {
         // motor bytes stay 0 (the Apex 5 has none)
         0x12 if pkt[4] == 6 && p[2] == 0 && p[3] == 0 => Ok(()),
         0x12 => bail!("blocked: rumble may only drive the two grip motors"),
-        82 => bail!("blocked: vibration command {cmd}"),
         // Space Station sends 254 when its server says so, then restarts the
         // pad; the model id lives in flash and both apps key off it.
         254 => bail!("blocked: device-type rewrite (254) changes the pad's model id"),
@@ -89,15 +101,24 @@ mod tests {
         assert!(check(&rumble(0, 0, 255, 0)).is_err());
         assert!(check(&rumble(0, 0, 0, 1)).is_err());
         assert!(check(&build(0x12, &[0, 0, 0, 0], false)).is_err()); // length 4
-        assert!(check(&build(82, &[1, 2, 255, 0, 0, 0, 0, 0], false)).is_err());
     }
 
     #[test]
-    fn vibrating_trigger_modes_are_refused() {
-        assert!(check(&build(81, &[1, 1, 2, 0, 1, 1, 1, 0], false)).is_err());
+    fn trigger_effects_go_live_in_space_stations_forms() {
+        assert!(check(&build(81, &[1, 1, 2, 0, 1, 1, 1, 0], false)).is_ok());
         assert!(check(&build(81, &[1, 2, 5, 0, 1, 1, 1, 0], false)).is_err());
         assert!(check(&build(81, &[1, 3, 1, 0, 100, 0], false)).is_err()); // side Both
         assert!(check(&build(81, &[1, 1, 1, 0, 100, 0], false)).is_ok());
+        let bind = |p: [u8; 8]| {
+            let mut pkt = build(82, &p, false);
+            pkt[4] = 11;
+            pkt
+        };
+        assert!(check(&bind([1, 2, 10, 10, 100, 1, 1, 70])).is_ok());
+        assert!(check(&bind([2, 0, 10, 10, 0, 0, 0, 0])).is_ok());
+        assert!(check(&bind([3, 2, 10, 10, 100, 1, 1, 70])).is_err()); // both sides
+        assert!(check(&bind([1, 1, 10, 10, 100, 1, 1, 70])).is_err()); // type 1
+        assert!(check(&build(82, &[1, 2, 10, 10, 100, 1, 1, 70], false)).is_err()); // length 8
     }
 
     #[test]

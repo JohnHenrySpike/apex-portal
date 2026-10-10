@@ -29,10 +29,9 @@ pub enum Cmd {
     SetNickname(String),
     Stream(bool),
     /// Factory content in every slot, saved; with `true` the lighting too.
-    /// Grip vibration bytes stay as they are.
     ResetAll(bool),
-    /// Write `profile` (and `led` when given) into `slot` and save it there,
-    /// keeping the slot's vibration settings. The running slot stays.
+    /// Write `profile` (and `led` when given) into `slot` and save it there.
+    /// The running slot stays.
     Install {
         profile: Profile,
         led: Option<LedConfig>,
@@ -107,6 +106,9 @@ struct Worker {
     pad: Option<evdev::Pad>,
     /// Last transport flags read, and when.
     flags: Option<(Flags, Instant)>,
+    /// Whether each trigger's rumble bind (82) is on; `None` = unknown,
+    /// e.g. left from before this connection.
+    bound: [Option<bool>; 2],
 }
 
 impl Worker {
@@ -195,6 +197,7 @@ impl Worker {
             Ok(mut d) => match device::read_info(&mut d) {
                 Ok(info) if info.supported() => {
                     self.dev = Some(d);
+                    self.bound = [None; 2];
                     self.send(Event::Connected(info));
                     if let Err(e) = self.refresh() {
                         self.fail(e);
@@ -237,7 +240,7 @@ impl Worker {
     }
 
     /// Read `slot` and its lighting (either read makes it active) and
-    /// re-engage its resistance effects.
+    /// re-engage its trigger effects.
     fn load_profile(&mut self, slot: u8, active: u8, tag: u16) -> Result<()> {
         let led = LedConfig::read(self.dev(), slot)?;
         self.led = Some(led.clone());
@@ -289,21 +292,36 @@ impl Worker {
         let r = f(self);
         let st = profile::status(self.dev())?;
         self.load_profile(back, back, st.versions[back as usize])?;
-        // a resistance engaged from before may be gone from the profile now
+        // an effect engaged from before may be gone from the profile now
         if let Some(p) = self.profile.clone() {
             self.engage(&p, true)?;
         }
         r
     }
 
-    /// Live-send stored trigger effects. Only resistance modes are ever sent;
-    /// with `clear` a side stored as Normal is actively cleared.
+    /// Live-send stored trigger effects as Space Station does: 81 for modes
+    /// 0-4, the 82 rumble bind for Vibration. A side that is not Vibration
+    /// has its bind released unless it is known to be free, since a bind
+    /// outlives profile switches. With `clear` a side stored as Normal is
+    /// actively cleared, and one going to Vibration loses its old effect.
     fn engage(&mut self, p: &Profile, clear: bool) -> Result<()> {
         for (side, id) in [(0, device::SIDE_LEFT), (1, device::SIDE_RIGHT)] {
             let f = p.force(side);
+            let vibration = f.mode == profile::MODE_VIBRATION;
+            if !vibration && self.bound[side] != Some(false) {
+                device::bind_trigger(self.dev(), id, &f.bind, false)?;
+                self.bound[side] = Some(false);
+            }
             match f.mode {
-                1 | 3 | 4 => device::engage_trigger(self.dev(), id, f.mode, &f.params)?,
+                1..=4 => device::engage_trigger(self.dev(), id, f.mode, &f.params)?,
                 0 if clear => device::engage_trigger(self.dev(), id, 0, &f.params)?,
+                _ if vibration => {
+                    if clear {
+                        device::engage_trigger(self.dev(), id, 0, &f.params)?;
+                    }
+                    device::bind_trigger(self.dev(), id, &f.bind, true)?;
+                    self.bound[side] = Some(true);
+                }
                 _ => {}
             }
         }
