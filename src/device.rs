@@ -156,14 +156,16 @@ pub fn set_number(dev: &mut Device, cmd: u8, value: u8) -> Result<()> {
     Ok(())
 }
 
+/// Space Station offers 8..12 bits only; 14 and 16 are in the firmware's
+/// enum but untried.
 pub const PRECISION: [(u8, &str); 7] = [
     (1, "8 бит"),
     (4, "9 бит"),
     (2, "10 бит"),
     (5, "11 бит"),
     (3, "12 бит"),
-    (6, "14 бит"),
-    (7, "16 бит"),
+    (6, "14 бит (не проверено)"),
+    (7, "16 бит (не проверено)"),
 ];
 /// Space Station's choices; `safety` refuses anything else above an hour.
 pub const SLEEP: [(u8, &str); 6] = [

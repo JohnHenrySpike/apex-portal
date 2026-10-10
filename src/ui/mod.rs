@@ -541,7 +541,7 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
         row(
             ui,
             "Точность стиков",
-            "Разрешение обычного (Xbox) ввода",
+            "Разрешение обычного (Xbox) ввода. Flydigi предлагает 8–12 бит",
             |ui| {
                 combo(ui, "prec", s.precision, &device::PRECISION, |v| {
                     app.send(Cmd::SetNumber(21, v))
@@ -589,7 +589,8 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
             (
                 8,
                 "Строка состояния всегда видна",
-                "Батарея и профиль поверх картинки",
+                "Батарея и профиль поверх картинки. Экспериментально: Flydigi Space Station \
+                 этой настройки не показывает и сама выключает её при каждом подключении",
             ),
         ] {
             if s.is_supported(sub) {
