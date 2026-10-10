@@ -4,6 +4,7 @@
 use std::time::{Duration, Instant};
 
 use crate::device::InputState;
+use crate::evdev::Output;
 
 /// Angular sectors of the stick gate, 5° each.
 pub const SECTORS: usize = 72;
@@ -66,7 +67,8 @@ pub struct Live {
     pub gates: [Gate; 2],
     /// From the gamepad node: what games get.
     pub out_gates: [Gate; 2],
-    pub out_sticks: Option<[(f32, f32); 2]>,
+    /// The gamepad node's latest state.
+    pub out: Option<Output>,
     window: Option<(Instant, u32)>,
 }
 
@@ -85,11 +87,11 @@ impl Live {
         }
     }
 
-    pub fn record_output(&mut self, sticks: [(f32, f32); 2]) {
-        for (g, (x, y)) in self.out_gates.iter_mut().zip(sticks) {
+    pub fn record_output(&mut self, o: Output) {
+        for (g, (x, y)) in self.out_gates.iter_mut().zip(o.sticks) {
             g.add(x, y);
         }
-        self.out_sticks = Some(sticks);
+        self.out = Some(o);
     }
 
     pub fn reset_gates(&mut self) {
@@ -102,7 +104,7 @@ impl Live {
         self.last = None;
         self.rate = None;
         self.window = None;
-        self.out_sticks = None;
+        self.out = None;
     }
 }
 

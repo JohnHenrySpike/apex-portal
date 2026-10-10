@@ -13,11 +13,13 @@ use super::widgets::{self, card, card_titled, hint};
 use super::{header, pad};
 use crate::App;
 
-/// Input state, pressed key ids, stick axes, LED frame and brightness.
+/// Input state, pressed key ids, stick axes, triggers in 0..255, LED
+/// frame and brightness.
 type View = (
     InputState,
     Vec<u8>,
     [(f32, f32); 2],
+    (u8, u8),
     Option<Vec<[u8; 3]>>,
     f32,
 );
@@ -74,13 +76,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
 
-    let pressed: Vec<u8> = BUTTONS
-        .iter()
-        .filter(|(l, b, m)| *l != "?" && s.pressed(*b, *m))
-        .filter_map(|(l, ..)| key_id(l))
-        .collect();
-    let axis = tester::axis;
-    let sticks = [(axis(s.lx), axis(s.ly)), (axis(s.rx), axis(s.ry))];
+    let (rate, gates, out) = app.tester();
+    source(app, ui, out.is_some());
+    let (pressed, sticks, triggers) = match out.filter(|_| app.tester_output) {
+        Some((_, o)) => {
+            let byte = |v: f32| (v * 255.0).round() as u8;
+            (
+                o.pressed(),
+                o.sticks,
+                (byte(o.triggers.0), byte(o.triggers.1)),
+            )
+        }
+        None => {
+            let pressed = BUTTONS
+                .iter()
+                .filter(|(l, b, m)| *l != "?" && s.pressed(*b, *m))
+                .filter_map(|(l, ..)| key_id(l))
+                .collect();
+            let axis = tester::axis;
+            let sticks = [(axis(s.lx), axis(s.ly)), (axis(s.rx), axis(s.ry))];
+            (pressed, sticks, (s.lt, s.rt))
+        }
+    };
+    let out = out.map(|(g, _)| g);
     let leds = app
         .led
         .as_ref()
@@ -91,12 +109,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .map(|l| l.cfg.brightness() as f32 / 100.0)
         .unwrap_or(0.0);
 
-    let (rate, gates, out) = app.tester();
     let reset = Cell::new(false);
     let wide = ui.available_width() > 860.0;
     let screen = format!("P{}", app.active + 1);
-    let mut st = (s, pressed, sticks, leds, bright);
-    let left = |(s, pressed, sticks, leds, bright): &mut View, ui: &mut egui::Ui| {
+    let mut st = (s, pressed, sticks, triggers, leds, bright);
+    let left = |(s, pressed, sticks, (lt, rt), leds, bright): &mut View, ui: &mut egui::Ui| {
         card(ui, |ui| {
             let w = ui.available_width();
             pad::show(
@@ -107,7 +124,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     brightness: *bright,
                     pressed: pressed.as_slice(),
                     sticks: Some(*sticks),
-                    triggers: Some((s.lt as f32 / 255.0, s.rt as f32 / 255.0)),
+                    triggers: Some((*lt as f32 / 255.0, *rt as f32 / 255.0)),
                     show_tiles: true,
                     screen: Some(&screen),
                     ..Default::default()
@@ -138,7 +155,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
         });
     };
-    let right = |(s, _, sticks, _, _): &mut View, ui: &mut egui::Ui| {
+    let right = |(s, _, sticks, (lt, rt), _, _): &mut View, ui: &mut egui::Ui| {
         card_titled(ui, "Стики", |ui| {
             ui.horizontal(|ui| {
                 let w = ((ui.available_width() - 12.0) / 2.0).min(170.0);
@@ -173,8 +190,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.add_space(12.0);
         card_titled(ui, "Курки", |ui| {
-            trigger(ui, "LT", s.lt);
-            trigger(ui, "RT", s.rt);
+            trigger(ui, "LT", *lt);
+            trigger(ui, "RT", *rt);
         });
         ui.add_space(12.0);
         card_titled(ui, "Движение", |ui| {
@@ -202,6 +219,35 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(12.0);
     rumble(app, ui);
+}
+
+/// Sensor or what games get: picks what the drawing, sticks and triggers
+/// show.
+fn source(app: &mut App, ui: &mut egui::Ui, have_output: bool) {
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(have_output, |ui| {
+            widgets::segmented(
+                ui,
+                &mut app.tester_output,
+                &[(false, "Датчик"), (true, "Для игр")],
+            );
+        });
+        hint(
+            ui,
+            match (have_output, app.tester_output) {
+                (false, _) => {
+                    "Выход для игр недоступен: геймпад не виден как контроллер \
+                     (например, его захватил Steam)."
+                }
+                (true, false) => "Кнопки как нажаты, до профиля.",
+                (true, true) => {
+                    "Что получают игры: с назначениями, турбо и макросами. \
+                     M1–M4, Fn, Turbo и Back игры не видят."
+                }
+            },
+        );
+    });
+    ui.add_space(8.0);
 }
 
 /// Runs the grip motors for under a second at the chosen strengths.

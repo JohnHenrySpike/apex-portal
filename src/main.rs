@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use apex5::device::{Flags, Info, Settings};
+use apex5::evdev::Output;
 use apex5::lighting::{Effect, LedConfig, Rgb};
 use apex5::profile::{Macro, Profile};
 use apex5::tester::Gate;
@@ -38,6 +39,10 @@ pub struct LedEdit {
     pub dirty_since: Option<Instant>,
 }
 
+/// Polling rate, sensor gates, then output gates and what games get now
+/// (`None` without the gamepad node).
+pub type Tester = (Option<f32>, [Gate; 2], Option<([Gate; 2], Output)>);
+
 pub struct App {
     h: Handle,
     pub tab: Tab,
@@ -63,6 +68,8 @@ pub struct App {
     pub selected_key: u8,
     /// Rumble test strength, left and right, in %.
     pub rumble: (u8, u8),
+    /// The input tester shows what games get rather than the sensor.
+    pub tester_output: bool,
     /// "Reset all" asked once and waiting for the second press, since when.
     pub reset_armed: Option<Instant>,
     pub reset_lighting: bool,
@@ -101,6 +108,7 @@ impl App {
             streaming: false,
             selected_key: 4,
             rumble: (50, 50),
+            tester_output: false,
             reset_armed: None,
             reset_lighting: true,
             copy_armed: None,
@@ -123,12 +131,9 @@ impl App {
             .map(|(s, _)| *s)
     }
 
-    /// Polling rate and stick gates gathered by the input tester.
-    /// Polling rate, sensor gates and output gates (`None` without the
-    /// gamepad node).
-    pub fn tester(&self) -> (Option<f32>, [Gate; 2], Option<[Gate; 2]>) {
+    pub fn tester(&self) -> Tester {
         let g = self.h.input.lock().unwrap();
-        (g.rate, g.gates, g.out_sticks.map(|_| g.out_gates))
+        (g.rate, g.gates, g.out.map(|o| (g.out_gates, o)))
     }
 
     pub fn reset_gates(&self) {

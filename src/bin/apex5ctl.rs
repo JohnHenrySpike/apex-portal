@@ -137,8 +137,8 @@ fn input(dev: &mut Device, secs: u64) -> Result<()> {
             }
         }
         if let Some(p) = pad.as_mut() {
-            for sticks in p.read()? {
-                for (g, (x, y)) in out.iter_mut().zip(sticks) {
+            for o in p.read()? {
+                for (g, (x, y)) in out.iter_mut().zip(o.sticks) {
                     g.add(x, y);
                 }
             }

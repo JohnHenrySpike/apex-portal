@@ -491,8 +491,8 @@ impl Worker {
             match pad.read() {
                 Ok(reports) => {
                     let mut live = self.input.lock().unwrap();
-                    for sticks in reports {
-                        live.record_output(sticks);
+                    for o in reports {
+                        live.record_output(o);
                         got = true;
                     }
                 }
