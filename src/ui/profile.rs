@@ -104,6 +104,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         edit,
         macros,
         selected_key,
+        cloud,
         ..
     } = app;
     let e = edit.as_mut().unwrap();
@@ -111,7 +112,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ProfileTab::Buttons => buttons(e, macros, selected_key, &screen, ui),
         ProfileTab::Macros => macros_ui(macros, ui),
         ProfileTab::Sticks => sticks(e, input, ui),
-        ProfileTab::Triggers => triggers(e, ui),
+        ProfileTab::Triggers => {
+            super::cloud::game_presets(cloud, e, ui);
+            ui.add_space(12.0);
+            triggers(e, ui);
+        }
         ProfileTab::Gyro => gyro(e, ui),
         ProfileTab::Copies => {}
     }
@@ -1322,11 +1327,13 @@ fn defaults(mode: u8, cur: ForceEffect) -> ForceEffect {
         }
         _ => params = cur.params,
     }
-    ForceEffect {
-        mode,
-        params,
-        bind: cur.bind,
+    let mut bind = cur.bind;
+    if mode == MODE_VIBRATION {
+        // Space Station's editor always writes 1, 1 here; only a game
+        // preset sets other values
+        bind.params[1..3].copy_from_slice(&[1, 1]);
     }
+    ForceEffect { mode, params, bind }
 }
 
 // ------------------------------------------------------------------ gyro

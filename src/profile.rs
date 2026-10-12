@@ -473,7 +473,9 @@ impl Profile {
     /// As Space Station writes it: Normal changes only the mode byte; the
     /// bind type is 2 in Vibration and 0 otherwise, and leaving Vibration
     /// keeps the bind bytes. Vibration keeps stroke and frequency in
-    /// params[0..2] and builds the bind from them.
+    /// params[0..2] and builds the bind from them. The bind's two middle
+    /// bytes, which Space Station's editor sets to 1, keep what a game
+    /// preset put there.
     pub fn set_force(&mut self, side: usize, mut f: ForceEffect) {
         if f.mode >= FORCE_MODES {
             return;
@@ -483,7 +485,8 @@ impl Profile {
         if f.mode == MODE_VIBRATION {
             let (stroke, freq) = (f.params[0].max(1), f.params[1].max(1));
             f.params = [stroke, freq, 1, 90, 0, 0, 0, 0, 0, 0];
-            f.bind.params = [stroke, 1, 1, freq, 0];
+            let [_, pressure, strength, ..] = f.bind.params;
+            f.bind.params = [stroke, pressure.max(1), strength.max(1), freq, 0];
             self.blob[o + 2] = f.bind.block.max(1);
             self.blob[o + 3] = f.bind.scale.min(200);
             self.blob[o + 4..o + 9].copy_from_slice(&f.bind.params);
@@ -492,6 +495,20 @@ impl Profile {
         if f.mode != 0 {
             self.blob[o + 10..o + 20].copy_from_slice(&f.params);
         }
+    }
+
+    /// One trigger in Vibration with a game's preset from Flydigi's list:
+    /// the bind kept exactly as Space Station sends it while the game runs,
+    /// the editor's stroke and frequency taken from it.
+    pub fn set_vibration_preset(&mut self, side: usize, b: &TriggerBind) {
+        let o = FORCE[side];
+        self.blob[o] = MODE_VIBRATION;
+        self.blob[o + 1] = 2;
+        self.blob[o + 2] = b.block.max(1);
+        self.blob[o + 3] = b.scale.min(200);
+        self.blob[o + 4..o + 9].copy_from_slice(&b.params);
+        let (stroke, freq) = (b.params[0].max(1), b.params[3].max(1));
+        self.blob[o + 10..o + 20].copy_from_slice(&[stroke, freq, 1, 90, 0, 0, 0, 0, 0, 0]);
     }
 
     // ---- macros (v3.1 page inside the profile)
@@ -879,6 +896,8 @@ mod tests {
         f.params[..2].copy_from_slice(&[120, 60]);
         f.bind.block = 30;
         f.bind.scale = 15;
+        // the editor's mode tile starts from Space Station's 1, 1
+        f.bind.params[1..3].copy_from_slice(&[1, 1]);
         p.set_force(0, f);
         assert_eq!(
             p.blob[185..205],
@@ -894,6 +913,31 @@ mod tests {
         assert_eq!(p.blob[185..195], [0, 0, 30, 15, 120, 1, 1, 60, 0, 0]);
         // the right trigger is untouched
         assert_eq!(p.blob[205..225], factory().blob[205..225]);
+    }
+
+    #[test]
+    fn game_presets_keep_their_bind_through_edits() {
+        let mut p = factory();
+        // Need for Speed Heat from Flydigi's list
+        let b = TriggerBind {
+            block: 10,
+            scale: 10,
+            params: [0, 1, 255, 70, 0],
+        };
+        p.set_vibration_preset(1, &b);
+        assert_eq!(
+            p.blob[205..225],
+            [
+                5, 2, 10, 10, 0, 1, 255, 70, 0, 0, 1, 70, 1, 90, 0, 0, 0, 0, 0, 0
+            ]
+        );
+        assert_eq!(p.force(1).bind, b, "sent live as it is");
+        p.check_triggers().unwrap();
+        // a new frequency keeps the preset's strength
+        let mut f = p.force(1);
+        f.params[1] = 90;
+        p.set_force(1, f);
+        assert_eq!(p.blob[209..214], [1, 1, 255, 90, 0]);
     }
 
     #[test]

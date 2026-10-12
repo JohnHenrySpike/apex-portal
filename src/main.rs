@@ -83,6 +83,8 @@ pub struct App {
     pub ds5_resistance: u8,
     /// Picture for the pad's screen and its upload.
     pub screen: ui::screen::State,
+    /// What was asked of Flydigi's server.
+    pub cloud: ui::cloud::State,
     shots: Option<Shots>,
 }
 
@@ -120,6 +122,7 @@ impl App {
             library: None,
             load_lighting: true,
             screen: Default::default(),
+            cloud: Default::default(),
             ds5_resistance: apex5::bridge::Settings::load().resistance,
             shots: Shots::from_env(),
         }

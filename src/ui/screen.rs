@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
+use apex5::cloud::Picture;
 use apex5::screen::{self, Fit, Source, Stage, Upload};
 use apex5::worker::Cmd;
 use eframe::egui::{self, CornerRadius, RichText, Stroke, TextureHandle, vec2};
@@ -101,6 +102,21 @@ fn pick(app: &mut App, ctx: &egui::Context) {
         if let Some(p) = file {
             let _ = tx.send(load(p).map_err(|e| format!("{e:#}")));
         }
+        ctx.request_repaint();
+    });
+    app.screen.loading = Some(rx);
+}
+
+/// One of Flydigi's pictures: downloaded once, then opened like a file.
+fn pick_official(app: &mut App, ctx: &egui::Context, p: Picture) {
+    let (tx, rx) = channel();
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        let r = p.fetch().and_then(load).map(|mut d| {
+            d.name = format!("{} (Flydigi)", p.title);
+            d
+        });
+        let _ = tx.send(r.map_err(|e| format!("{e:#}")));
         ctx.request_repaint();
     });
     app.screen.loading = Some(rx);
@@ -225,6 +241,7 @@ pub fn on_done(app: &mut App, r: Result<(), String>) {
 /// What a change in the card asks for, applied once the draft is let go.
 enum Action {
     Pick,
+    Official(Picture),
     InstallRule,
     Upload(Upload),
     Clear,
@@ -251,6 +268,25 @@ pub fn card(app: &mut App, ui: &mut egui::Ui) {
             }
         },
     );
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let text = if app.cloud.gallery_open {
+            "Скрыть подборку"
+        } else {
+            "Подборка Flydigi"
+        };
+        if widgets::secondary(ui, text, true).clicked() {
+            app.cloud.gallery_open = !app.cloud.gallery_open;
+        }
+        hint(ui, "Официальные картинки и анимации с сервера Flydigi");
+    });
+    if app.cloud.gallery_open {
+        ui.add_space(6.0);
+        let enabled = !loading && !app.busy;
+        if let Some(p) = super::cloud::gallery(&mut app.cloud, enabled, ui) {
+            action = Some(Action::Official(p));
+        }
+    }
     if let Some((msg, err)) = &app.screen.result {
         ui.label(RichText::new(msg).color(if *err { BAD } else { OK }));
     }
@@ -392,6 +428,7 @@ pub fn card(app: &mut App, ui: &mut egui::Ui) {
     }
     match action {
         Some(Action::Pick) => pick(app, ui.ctx()),
+        Some(Action::Official(p)) => pick_official(app, ui.ctx(), p),
         Some(Action::InstallRule) => install_rule(app, ui.ctx()),
         Some(Action::Upload(up)) => {
             app.screen.result = None;

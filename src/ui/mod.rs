@@ -8,6 +8,7 @@ use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 
 use crate::{App, Tab};
 
+pub mod cloud;
 pub mod copies;
 mod dualsense;
 mod input;
@@ -728,6 +729,8 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
                     ui.end_row();
                 }
             });
+        ui.add_space(8.0);
+        cloud::firmware(&mut app.cloud, &info, ui);
     });
 }
 

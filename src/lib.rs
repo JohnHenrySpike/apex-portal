@@ -2,6 +2,7 @@
 //! device's settings, lighting and mapping profiles.
 
 pub mod bridge;
+pub mod cloud;
 pub mod device;
 pub mod ds5;
 pub mod evdev;

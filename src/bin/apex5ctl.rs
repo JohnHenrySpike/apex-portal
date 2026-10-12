@@ -18,13 +18,17 @@
 //!   apex5ctl screen upload FILE [ms] [whole]
 //!                              send a picture, GIF or Flydigi's factory .bin to the
 //!                              screen; cable only, asks first, takes ~25 s per frame
+//!   apex5ctl cloud firmware    ask Flydigi's server about newer firmware (sends the
+//!                              model and versions; downloads nothing)
+//!   apex5ctl cloud games       games with trigger vibration presets from Flydigi
+//!   apex5ctl cloud pictures    Flydigi's official screen pictures
 
 use anyhow::{Result, bail};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use apex5::tester::{self, Gate, SECTORS};
-use apex5::{device, evdev, hid, hid::Device, library, lighting, profile, screen};
+use apex5::{cloud, device, evdev, hid, hid::Device, library, lighting, profile, screen};
 
 fn hex_colour(s: &str) -> Result<lighting::Rgb> {
     let s = s.trim_start_matches('#');
@@ -434,11 +438,55 @@ fn main() -> Result<()> {
         ["keys", secs] => return keys(secs.parse()?),
         ["screen", "preview", file, out, rest @ ..] => return screen_preview(file, out, rest),
         ["screen", "upload", file, rest @ ..] => return screen_upload(file, rest),
+        ["cloud", "games"] => {
+            for g in cloud::game_presets()? {
+                let [l, r] = &g.bind;
+                println!(
+                    "{:>4}  {:<36} L block {:>3} scale {:>3} {:?}{}",
+                    g.id,
+                    g.name,
+                    l.block,
+                    l.scale,
+                    l.params,
+                    if l == r {
+                        String::new()
+                    } else {
+                        format!("  R {r:?}")
+                    }
+                );
+            }
+            return Ok(());
+        }
+        ["cloud", "pictures"] => {
+            for p in cloud::pictures()? {
+                println!("{:>4}  {:<24} {}", p.id, p.title, p.url);
+            }
+            return Ok(());
+        }
         _ => {}
     }
     let mut dev = Device::open()?;
     match a.as_slice() {
         ["info"] | [] => info(&mut dev)?,
+        ["cloud", "firmware"] => {
+            let i = device::read_info(&mut dev)?;
+            let news = cloud::firmware(&i)?;
+            if news.is_empty() {
+                println!("all firmware is current");
+            }
+            for n in news {
+                println!(
+                    "{:<8} {} -> {}{}",
+                    n.chip,
+                    n.current,
+                    n.latest,
+                    if n.pushed { " (pushed)" } else { "" }
+                );
+                for l in n.notes.lines() {
+                    println!("         {l}");
+                }
+            }
+        }
         ["input"] => input(&mut dev, 5)?,
         ["input", secs] => input(&mut dev, secs.parse()?)?,
         ["profile", "switch", n] => {
