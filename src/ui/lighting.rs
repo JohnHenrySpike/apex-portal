@@ -3,7 +3,6 @@
 use std::time::{Duration, Instant};
 
 use apex5::lighting::{Effect, LedConfig, hue, left_to_right};
-use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
 
 use super::theme::{self, BORDER, CARD_HI, DIM, HOVER, TEXT, WARN, accent};
@@ -79,8 +78,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn preview_card(app: &mut App, ui: &mut egui::Ui) {
-    let led_flash_dirty = app.led_flash_dirty;
-    let busy = app.busy;
     let Some(led) = app.led.as_ref() else { return };
     let t = ui.input(|i| i.time);
     let frame = current_frame(&led.cfg, t);
@@ -103,41 +100,38 @@ fn preview_card(app: &mut App, ui: &mut egui::Ui) {
     if led.effect.animated() {
         ui.ctx().request_repaint_after(Duration::from_millis(33));
     }
-    ui.add_space(12.0);
-    card(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                if led_flash_dirty {
-                    ui.label(
-                        RichText::new("Не сохранено в памяти геймпада")
-                            .font(theme::medium(14.5))
-                            .color(WARN),
-                    );
-                    ui.label(
-                        RichText::new("Без сохранения подсветка сбросится, когда геймпад уснёт")
-                            .size(12.5)
-                            .color(DIM),
-                    );
-                } else {
-                    ui.label(
-                        RichText::new("Память геймпада")
-                            .font(theme::medium(14.5))
-                            .color(TEXT),
-                    );
-                    ui.label(
-                        RichText::new("Чтобы подсветка пережила сон")
-                            .size(12.5)
-                            .color(DIM),
-                    );
-                }
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::primary(ui, "Сохранить", !busy).clicked() {
-                    app.send(Cmd::SaveLed);
-                }
-            });
-        });
+}
+
+/// The bar under the page: whether the pad keeps this lighting, Save and
+/// Undo.
+pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
+    if app.led.is_none() {
+        return;
+    }
+    let dirty = app.led_dirty();
+    let (dot, title, sub) = if dirty {
+        (
+            WARN,
+            "Подсветка изменена",
+            "Видна на геймпаде, но сбросится, когда он уснёт",
+        )
+    } else {
+        (theme::OK, "Всё сохранено", "Подсветка сохранена в геймпаде")
+    };
+    widgets::save_bar(ui, "lighting_actions", dot, title, sub, |ui| {
+        let busy = app.busy;
+        if widgets::primary(ui, "Сохранить", dirty && !busy)
+            .on_hover_text("Сохранить подсветку во флеш-память геймпада")
+            .clicked()
+        {
+            app.save_led();
+        }
+        if widgets::secondary(ui, "Отменить", dirty && !busy && app.led_saved.is_some())
+            .on_hover_text("Вернуть подсветку, какой она была до изменений")
+            .clicked()
+        {
+            app.revert_led();
+        }
     });
 }
 
@@ -258,7 +252,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
 
     ui.add_space(12.0);
     card_titled(ui, "Яркость и скорость", |ui| {
-        ui.spacing_mut().slider_width = (ui.available_width() - 140.0).max(120.0);
+        ui.spacing_mut().slider_width = (ui.available_width() - 200.0).max(100.0);
         ui.horizontal(|ui| {
             ui.add_sized(
                 [90.0, 24.0],
@@ -266,7 +260,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
             );
             let mut b = led.cfg.brightness();
             if ui
-                .add(egui::Slider::new(&mut b, 0..=100).suffix("%"))
+                .add(widgets::slider(&mut b, 0..=100).suffix("%"))
                 .changed()
             {
                 led.cfg.set_brightness(b);
@@ -281,7 +275,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
                 );
                 // Stored as a cycle time (bigger = slower); shown as speed.
                 let mut speed = 31 - led.cfg.cycle().clamp(1, 30);
-                if ui.add(egui::Slider::new(&mut speed, 1..=30)).changed() {
+                if ui.add(widgets::slider(&mut speed, 1..=30)).changed() {
                     led.cfg.set_cycle(31 - speed);
                     led.dirty_since = Some(Instant::now());
                 }

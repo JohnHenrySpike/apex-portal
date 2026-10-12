@@ -134,7 +134,20 @@ pub fn firmware(info: &Info) -> Result<Vec<FirmwareNews>> {
         }
     }
     let data = post("/Update/firmware", &body)?;
+    // The notes are Flydigi's, in Chinese, so the app does not show them;
+    // the whole answer stays on disk for whoever wants to read it.
+    if let Some(path) = firmware_answer() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, serde_json::to_string_pretty(&data)?);
+    }
     Ok(firmware_news(&data, &sent))
+}
+
+/// Where the last firmware answer is kept.
+pub fn firmware_answer() -> Option<PathBuf> {
+    Some(cache_dir()?.join("firmware.json"))
 }
 
 fn firmware_news(data: &Value, sent: &[(&'static str, &str, String)]) -> Vec<FirmwareNews> {

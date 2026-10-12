@@ -39,7 +39,102 @@ pub enum Fit {
     Whole,
 }
 
-/// A picture as decoded, frames kept a little larger than the screen.
+impl Fit {
+    /// The part of a `w × h` picture this fit puts on the screen.
+    pub fn crop(self, w: u32, h: u32) -> Crop {
+        match self {
+            Fit::Fill => Crop::fill(w, h),
+            Fit::Whole => Crop::whole(w, h),
+        }
+    }
+}
+
+/// The part of a picture that goes on the screen, in fractions of the
+/// picture's width and height, so it fits every frame of a GIF and survives
+/// `decode`'s shrinking. In pixels it is 2 : 1 like the screen. It may reach
+/// past the picture: the screen is black there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Crop {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Crop {
+    /// `w` wide, centred on (cx, cy), the height following from 2 : 1.
+    fn sized(w: f32, (cx, cy): (f32, f32), src_w: u32, src_h: u32) -> Crop {
+        let h = w * src_w as f32 / (2.0 * src_h.max(1) as f32);
+        Crop {
+            x: cx - w / 2.0,
+            y: cy - h / 2.0,
+            w,
+            h,
+        }
+    }
+
+    /// The largest part inside the picture, centred.
+    pub fn fill(src_w: u32, src_h: u32) -> Crop {
+        let w = (2.0 * src_h as f32 / src_w.max(1) as f32).min(1.0);
+        Crop::sized(w, (0.5, 0.5), src_w, src_h)
+    }
+
+    /// The smallest part holding the whole picture, centred.
+    pub fn whole(src_w: u32, src_h: u32) -> Crop {
+        let w = (2.0 * src_h as f32 / src_w.max(1) as f32).max(1.0);
+        Crop::sized(w, (0.5, 0.5), src_w, src_h)
+    }
+
+    pub fn center(&self) -> (f32, f32) {
+        (self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
+    /// The same size over the middle of the picture.
+    pub fn centered(self) -> Crop {
+        Crop {
+            x: (1.0 - self.w) / 2.0,
+            y: (1.0 - self.h) / 2.0,
+            ..self
+        }
+    }
+
+    /// Widths the editor allows: at least 8 picture pixels across (or the
+    /// whole of a tinier picture), at most four times `whole`.
+    pub fn width_range(src_w: u32, src_h: u32) -> (f32, f32) {
+        let whole = Crop::whole(src_w, src_h).w;
+        ((8.0 / src_w.max(1) as f32).min(whole), 4.0 * whole)
+    }
+
+    /// Brought within the editor's limits: the width in `width_range`, the
+    /// height matching it, the centre inside the picture.
+    pub fn limited(self, src_w: u32, src_h: u32) -> Crop {
+        let (lo, hi) = Crop::width_range(src_w, src_h);
+        let (cx, cy) = self.center();
+        Crop::sized(
+            self.w.clamp(lo, hi),
+            (cx.clamp(0.0, 1.0), cy.clamp(0.0, 1.0)),
+            src_w,
+            src_h,
+        )
+    }
+
+    /// `f` times wider and taller, the point (px, py) staying where it is;
+    /// `f > 1` shows more of the picture.
+    pub fn zoomed(self, f: f32, (px, py): (f32, f32), src_w: u32, src_h: u32) -> Crop {
+        let (lo, hi) = Crop::width_range(src_w, src_h);
+        let w = (self.w * f).clamp(lo, hi);
+        let f = w / self.w;
+        Crop {
+            x: px - (px - self.x) * f,
+            y: py - (py - self.y) * f,
+            w,
+            h: self.h * f,
+        }
+        .limited(src_w, src_h)
+    }
+}
+
+/// A picture as decoded, frames kept larger than the screen.
 pub struct Source {
     pub frames: Vec<RgbaImage>,
     /// Average GIF frame delay; `None` for a still picture.
@@ -47,6 +142,11 @@ pub struct Source {
     /// More frames than `MAX_FRAMES` were in the file.
     pub cut: bool,
 }
+
+/// How many times the screen a still picture keeps, so the editor can zoom
+/// in without blur; GIF frames keep less, there may be 150 of them.
+const STILL_KEEP: f32 = 6.0;
+const GIF_KEEP: f32 = 2.0;
 
 /// Decodes a PNG, JPEG or GIF; a GIF gives its first `MAX_FRAMES` frames.
 pub fn decode(path: &Path) -> Result<Source> {
@@ -56,7 +156,7 @@ pub fn decode(path: &Path) -> Result<Source> {
     if reader.format() != Some(ImageFormat::Gif) {
         let img = reader.decode().context("не удалось прочитать картинку")?;
         return Ok(Source {
-            frames: vec![shrink(img.to_rgba8())],
+            frames: vec![shrink(img.to_rgba8(), STILL_KEEP)],
             interval_ms: None,
             cut: false,
         });
@@ -74,7 +174,7 @@ pub fn decode(path: &Path) -> Result<Source> {
         let f = f.context("не удалось прочитать кадр GIF")?;
         let (n, d) = f.delay().numer_denom_ms();
         total_ms += n / d.max(1);
-        frames.push(shrink(f.into_buffer()));
+        frames.push(shrink(f.into_buffer(), GIF_KEEP));
     }
     if frames.is_empty() {
         bail!("в GIF нет кадров");
@@ -89,11 +189,11 @@ pub fn decode(path: &Path) -> Result<Source> {
     })
 }
 
-/// Keeps at least twice the screen in both directions, so either fit stays
-/// sharp, without holding full-size GIF frames in memory.
-fn shrink(img: RgbaImage) -> RgbaImage {
+/// Keeps at least `keep` times the screen in both directions, so the
+/// filled screen stays sharp, without holding full-size frames in memory.
+fn shrink(img: RgbaImage, keep: f32) -> RgbaImage {
     let (w, h) = img.dimensions();
-    let scale = (2.0 * W as f32 / w as f32).max(2.0 * H as f32 / h as f32);
+    let scale = (keep * W as f32 / w as f32).max(keep * H as f32 / h as f32);
     if scale >= 1.0 {
         return img;
     }
@@ -104,42 +204,91 @@ fn shrink(img: RgbaImage) -> RgbaImage {
     imageops::resize(&img, nw, nh, FilterType::Triangle)
 }
 
+/// For each of `out` screen pixels along one axis, the picture pixels it
+/// reads and their weights. The screen spans `len` picture pixels from
+/// `start`; the picture is `n` pixels long and black beyond.
+fn taps(start: f32, len: f32, n: u32, out: u32) -> Vec<Vec<(u32, f32)>> {
+    let step = len / out as f32;
+    (0..out)
+        .map(|i| {
+            let a = start + i as f32 * step;
+            let b = a + step;
+            if step >= 1.0 {
+                // shrinking: the average of what the screen pixel covers
+                let lo = a.floor().max(0.0) as i64;
+                let hi = (b.ceil() as i64).min(n as i64);
+                (lo..hi)
+                    .filter_map(|p| {
+                        let cover = (b.min(p as f32 + 1.0) - a.max(p as f32)) / step;
+                        (cover > 0.0).then_some((p as u32, cover))
+                    })
+                    .collect()
+            } else {
+                // enlarging: linear between the nearest pixel centres, the
+                // edge pixels stretched out to the picture's border
+                let c = (a + b) / 2.0;
+                if c < 0.0 || c >= n as f32 {
+                    return vec![];
+                }
+                let t = c - 0.5;
+                let p0 = t.floor();
+                let f = t - p0;
+                let at = |p: f32| (p.max(0.0) as u32).min(n - 1);
+                vec![(at(p0), 1.0 - f), (at(p0 + 1.0), f)]
+            }
+        })
+        .collect()
+}
+
 /// One screen frame from a picture: fitted to 160 × 80 on black, colours
 /// rounded the way Space Station rounds them.
 pub fn encode(img: &RgbaImage, fit: Fit) -> Vec<u8> {
     let (w, h) = img.dimensions();
-    let mut canvas = RgbaImage::from_pixel(W, H, Rgba([0, 0, 0, 255]));
-    match fit {
-        Fit::Fill => {
-            let (cw, ch) = if w * H > h * W {
-                ((h * W / H).max(1), h)
-            } else {
-                (w, (w * H / W).max(1))
-            };
-            let crop = imageops::crop_imm(img, (w - cw) / 2, (h - ch) / 2, cw, ch).to_image();
-            let scaled = imageops::resize(&crop, W, H, FilterType::CatmullRom);
-            imageops::overlay(&mut canvas, &scaled, 0, 0);
-        }
-        Fit::Whole => {
-            let scale = (W as f32 / w as f32).min(H as f32 / h as f32);
-            let (sw, sh) = (
-                ((w as f32 * scale).round() as u32).clamp(1, W),
-                ((h as f32 * scale).round() as u32).clamp(1, H),
-            );
-            let scaled = imageops::resize(img, sw, sh, FilterType::CatmullRom);
-            let (x, y) = ((W - sw) / 2, (H - sh) / 2);
-            imageops::overlay(&mut canvas, &scaled, x as i64, y as i64);
+    encode_crop(img, fit.crop(w, h))
+}
+
+/// One screen frame from the `crop` part of a picture, black outside it.
+pub fn encode_crop(img: &RgbaImage, crop: Crop) -> Vec<u8> {
+    let (w, h) = img.dimensions();
+    let cols = taps(crop.x * w as f32, crop.w * w as f32, w, W);
+    let rows = taps(crop.y * h as f32, crop.h * h as f32, h, H);
+    // the picture rows some screen row reads, squeezed to the screen's width
+    // first; colours premultiplied, which puts them over black
+    let (y0, y1) = rows
+        .iter()
+        .flatten()
+        .fold((u32::MAX, 0), |(a, b), &(y, _)| (a.min(y), b.max(y + 1)));
+    let mut mid = vec![[0f32; 3]; y1.saturating_sub(y0) as usize * W as usize];
+    for y in y0..y1 {
+        let line = &mut mid[(y - y0) as usize * W as usize..][..W as usize];
+        for (acc, taps) in line.iter_mut().zip(&cols) {
+            for &(x, wt) in taps {
+                let [r, g, b, a] = img.get_pixel(x, y).0;
+                let k = wt * a as f32 / 255.0;
+                acc[0] += r as f32 * k;
+                acc[1] += g as f32 * k;
+                acc[2] += b as f32 * k;
+            }
         }
     }
     let mut out = Vec::with_capacity(FRAME);
     out.extend_from_slice(&HEADER);
-    for p in canvas.pixels() {
-        let [r, g, b, _] = p.0;
-        let r5 = ((r as u32 + 4) / 8).min(31);
-        let g6 = ((g as u32 + 2) / 4).min(63);
-        let b5 = ((b as u32 + 4) / 8).min(31);
-        let v = (r5 << 11) | (g6 << 5) | b5;
-        out.extend_from_slice(&[(v >> 8) as u8, v as u8]);
+    for taps in &rows {
+        for ox in 0..W as usize {
+            let mut c = [0f32; 3];
+            for &(y, wt) in taps {
+                let m = mid[(y - y0) as usize * W as usize + ox];
+                for k in 0..3 {
+                    c[k] += m[k] * wt;
+                }
+            }
+            let [r, g, b] = c.map(|v| v.round().clamp(0.0, 255.0) as u32);
+            let r5 = ((r + 4) / 8).min(31);
+            let g6 = ((g + 2) / 4).min(63);
+            let b5 = ((b + 4) / 8).min(31);
+            let v = (r5 << 11) | (g6 << 5) | b5;
+            out.extend_from_slice(&[(v >> 8) as u8, v as u8]);
+        }
     }
     out
 }
@@ -173,13 +322,20 @@ impl Upload {
         if frames.iter().any(|f| f.len() != FRAME || f[..4] != HEADER) {
             bail!("кадр не в формате экрана");
         }
-        let ms = interval_ms.clamp(INTERVAL_MS.0, INTERVAL_MS.1);
-        Ok(Upload {
+        let mut up = Upload {
             data: frames.concat(),
             frames: frames.len(),
-            frame_rate: ((ms + 5) / 10).clamp(1, 255) as u8,
+            frame_rate: 0,
             restore_default: false,
-        })
+        };
+        up.set_interval(interval_ms);
+        Ok(up)
+    }
+
+    /// Changes an own animation's speed without encoding it again.
+    pub fn set_interval(&mut self, interval_ms: u32) {
+        let ms = interval_ms.clamp(INTERVAL_MS.0, INTERVAL_MS.1);
+        self.frame_rate = ((ms + 5) / 10).clamp(1, 255) as u8;
     }
 
     /// `default_screen_image_<deviceType>.bin` from Space Station.
@@ -611,6 +767,112 @@ mod tests {
         assert_eq!(f.get_pixel(80, 40).0, [248, 252, 248, 255]);
         let f = to_rgba(&encode(&white, Fit::Fill));
         assert_eq!(f.get_pixel(0, 40).0, [248, 252, 248, 255]);
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    /// 2 : 1 in pixels, like the screen.
+    fn screen_shaped(c: Crop, w: u32, h: u32) -> bool {
+        close(c.w * w as f32, 2.0 * c.h * h as f32)
+    }
+
+    #[test]
+    fn fill_and_whole_crops() {
+        for (w, h) in [(100, 100), (1000, 100), (90, 160), (320, 160), (1, 1)] {
+            let (fill, whole) = (Crop::fill(w, h), Crop::whole(w, h));
+            assert!(screen_shaped(fill, w, h) && screen_shaped(whole, w, h));
+            // fill: inside, touching two opposite edges
+            assert!(fill.x >= -1e-6 && fill.y >= -1e-6);
+            assert!(fill.x + fill.w <= 1.0 + 1e-6 && fill.y + fill.h <= 1.0 + 1e-6);
+            assert!(close(fill.w, 1.0) || close(fill.h, 1.0));
+            // whole: around the picture, touching two opposite edges
+            assert!(whole.x <= 1e-6 && whole.y <= 1e-6);
+            assert!(whole.x + whole.w >= 1.0 - 1e-6 && whole.y + whole.h >= 1.0 - 1e-6);
+            assert!(close(whole.w, 1.0) || close(whole.h, 1.0));
+            for c in [fill, whole] {
+                assert!(close(c.center().0, 0.5) && close(c.center().1, 0.5));
+            }
+        }
+        // a square: fill is the middle half, whole twice as wide
+        let sq = Crop::fill(100, 100);
+        assert!(close(sq.y, 0.25) && close(sq.h, 0.5) && close(sq.w, 1.0));
+        let sq = Crop::whole(100, 100);
+        assert!(close(sq.x, -0.5) && close(sq.w, 2.0) && close(sq.h, 1.0));
+    }
+
+    #[test]
+    fn crop_picks_the_chosen_part() {
+        // four colours in quarters of a 2 : 1 picture
+        let quad = RgbaImage::from_fn(320, 160, |x, y| match (x < 160, y < 80) {
+            (true, true) => Rgba([255, 0, 0, 255]),
+            (false, true) => Rgba([0, 255, 0, 255]),
+            (true, false) => Rgba([0, 0, 255, 255]),
+            (false, false) => Rgba([255, 255, 255, 255]),
+        });
+        let px = |c: Crop, x, y| to_rgba(&encode_crop(&quad, c)).get_pixel(x, y).0;
+        let green = Crop {
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 0.5,
+        };
+        assert_eq!(px(green, 0, 0), [0, 252, 0, 255]);
+        assert_eq!(px(green, 159, 79), [0, 252, 0, 255]);
+        // half off the right edge: picture on the left, black on the right
+        let off = Crop {
+            x: 0.75,
+            y: 0.5,
+            w: 0.5,
+            h: 0.5,
+        };
+        assert_eq!(px(off, 10, 40), [248, 252, 248, 255]);
+        assert_eq!(px(off, 150, 40), [0, 0, 0, 255]);
+        // entirely outside: all black
+        let gone = Crop { x: 3.0, ..off };
+        assert!(encode_crop(&quad, gone)[4..].iter().all(|&b| b == 0));
+        // a crop of fill's shape gives the same frame as Fit::Fill
+        let photo = RgbaImage::from_fn(300, 200, |x, y| Rgba([x as u8, y as u8, 7, 255]));
+        assert_eq!(
+            encode_crop(&photo, Crop::fill(300, 200)),
+            encode(&photo, Fit::Fill)
+        );
+        // zoomed in past the pixels: the edge pixels reach the border, no
+        // black seam
+        let tiny = RgbaImage::from_pixel(4, 2, Rgba([255, 0, 0, 255]));
+        let f = to_rgba(&encode_crop(&tiny, Crop::fill(4, 2)));
+        assert_eq!(f.get_pixel(0, 0).0, [248, 0, 0, 255]);
+        assert_eq!(f.get_pixel(159, 79).0, [248, 0, 0, 255]);
+    }
+
+    #[test]
+    fn crop_limits_and_zoom() {
+        let (w, h) = (400, 300);
+        let (lo, hi) = Crop::width_range(w, h);
+        assert!(close(lo, 8.0 / 400.0));
+        assert!(close(hi, 4.0 * Crop::whole(w, h).w));
+        let fill = Crop::fill(w, h);
+        // zooming in about a point keeps it in place, relative to the frame
+        let p = (0.3, 0.4);
+        let z = fill.zoomed(0.5, p, w, h);
+        assert!(close(z.w, fill.w * 0.5) && screen_shaped(z, w, h));
+        assert!(close((p.0 - z.x) / z.w, (p.0 - fill.x) / fill.w));
+        assert!(close((p.1 - z.y) / z.h, (p.1 - fill.y) / fill.h));
+        // and stops at the limits
+        assert!(close(fill.zoomed(1e-6, p, w, h).w, lo));
+        assert!(close(fill.zoomed(1e6, p, w, h).w, hi));
+        // dragged far away, the centre comes back onto the picture
+        let away = Crop {
+            x: 5.0,
+            y: -9.0,
+            ..fill
+        }
+        .limited(w, h);
+        assert!(close(away.center().0, 1.0) && close(away.center().1, 0.0));
+        assert!(screen_shaped(away, w, h));
+        let mid = Crop { x: 0.9, ..fill }.centered();
+        assert!(close(mid.center().0, 0.5) && close(mid.w, fill.w));
     }
 
     #[test]

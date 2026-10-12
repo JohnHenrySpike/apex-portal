@@ -1,5 +1,7 @@
 //! Apex 5 Control — native configuration app for the Flydigi Apex 5.
 
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 
 use apex5::device::{Flags, Info, Settings};
@@ -11,15 +13,20 @@ use apex5::worker::{self, Cmd, Event, Handle};
 use eframe::egui;
 
 mod remember;
+mod tray;
 mod ui;
+
+use tray::Wake;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Overview,
     Lighting,
+    Screen,
     Profile,
-    Settings,
+    DualSense,
     Input,
+    Settings,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,10 +35,11 @@ pub enum ProfileTab {
     Macros,
     Sticks,
     Triggers,
+    Vibration,
     Gyro,
-    Copies,
 }
 
+#[derive(Clone)]
 pub struct LedEdit {
     pub cfg: LedConfig,
     pub effect: Effect,
@@ -56,6 +64,9 @@ pub struct App {
     pub led: Option<LedEdit>,
     /// Lighting written to the pad's working memory but not committed.
     pub led_flash_dirty: bool,
+    /// The lighting as it was before this app changed it, or as last saved:
+    /// what "Отменить" brings back.
+    pub led_saved: Option<LedEdit>,
     /// Profile as it is on the pad (RAM) and as being edited.
     pub pad_profile: Option<Profile>,
     pub edit: Option<Profile>,
@@ -73,8 +84,8 @@ pub struct App {
     /// "Reset all" asked once and waiting for the second press, since when.
     pub reset_armed: Option<Instant>,
     pub reset_lighting: bool,
-    /// A copy or load asked once and waiting for the second press.
-    pub copy_armed: Option<(ui::copies::Pending, Instant)>,
+    /// The profile menu's open dialog.
+    pub copy_dialog: Option<ui::copies::Dialog>,
     pub save_name: String,
     /// Profiles saved on this computer, read when first shown.
     pub library: Option<Vec<apex5::library::Entry>>,
@@ -86,14 +97,17 @@ pub struct App {
     /// What was asked of Flydigi's server.
     pub cloud: ui::cloud::State,
     shots: Option<Shots>,
+    /// The window closes for good, even with DualSense mode on.
+    quit: bool,
+    /// The window's size when not maximized, and whether it is maximized:
+    /// the next window opens the same.
+    geometry: ([f32; 2], bool),
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let ctx = cc.egui_ctx.clone();
-        ui::theme::install(&ctx);
-        App {
-            h: worker::spawn(move || ctx.request_repaint()),
+    fn new(h: Handle, size: [f32; 2]) -> Self {
+        let mut app = App {
+            h,
             tab: Tab::Overview,
             profile_tab: ProfileTab::Buttons,
             info: None,
@@ -104,6 +118,7 @@ impl App {
             flags: None,
             led: None,
             led_flash_dirty: false,
+            led_saved: None,
             pad_profile: None,
             edit: None,
             macros: vec![],
@@ -117,7 +132,7 @@ impl App {
             tester_output: false,
             reset_armed: None,
             reset_lighting: true,
-            copy_armed: None,
+            copy_dialog: None,
             save_name: String::new(),
             library: None,
             load_lighting: true,
@@ -125,6 +140,75 @@ impl App {
             cloud: Default::default(),
             ds5_resistance: apex5::bridge::Settings::load().resistance,
             shots: Shots::from_env(),
+            quit: false,
+            geometry: (size, false),
+        };
+        if let Some(p) = std::env::var_os("APEX5_SCREEN_FILE") {
+            ui::screen::preload(&mut app, p.into());
+        }
+        app
+    }
+
+    /// A window opens on the app: a new egui context, which needs the look
+    /// set up and knows nothing of the last window's textures.
+    fn attach(&mut self, ctx: &egui::Context) {
+        ui::theme::install(ctx);
+        self.screen.forget_textures();
+        self.cloud.forget_textures();
+    }
+
+    fn options(&self) -> eframe::NativeOptions {
+        let (size, maximized) = self.geometry;
+        eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_title("Apex 5 Control")
+                .with_app_id("apex5-control")
+                .with_inner_size(size)
+                .with_maximized(maximized)
+                .with_min_inner_size([820.0, 560.0])
+                // the app draws its own title bar and window edges
+                .with_decorations(false),
+            ..Default::default()
+        }
+    }
+
+    /// The window closed with DualSense mode on: the tray until the window
+    /// is asked for again (true) or the app should end (false).
+    fn background(&mut self, wake: &Receiver<Wake>, tx: &Sender<Wake>) -> bool {
+        // knocks meant for the window that just closed
+        while wake.try_recv().is_ok() {}
+        let Some(_tray) = tray::Tray::show(tx.clone()) else {
+            return false;
+        };
+        loop {
+            match wake.recv_timeout(Duration::from_millis(200)) {
+                Ok(Wake::Open) => return true,
+                Ok(Wake::DualSenseOff) => {
+                    self.send(Cmd::DualSense(false));
+                    return false;
+                }
+                Ok(Wake::Quit) | Err(RecvTimeoutError::Disconnected) => return false,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            while let Ok(ev) = self.h.rx.try_recv() {
+                self.on_event(ev);
+            }
+            // stopped some other way (an error): nothing to stay for
+            if !self.ds5().on {
+                return false;
+            }
+        }
+    }
+
+    /// Lets the worker put the pad back before the process ends: the
+    /// virtual DualSense goes, trigger binds are undone, the stream is let
+    /// go. It ends once nobody can send it commands.
+    fn shutdown(&mut self) {
+        drop(std::mem::replace(&mut self.h.tx, channel().0));
+        // the worker holds the other half of `ds5` until it returns
+        let until = Instant::now() + Duration::from_secs(2);
+        while Arc::strong_count(&self.h.ds5) > 1 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -162,6 +246,41 @@ impl App {
             let _ = e.set_macros(&self.macros);
         }
         Some(e)
+    }
+
+    /// Lighting changed here and not yet saved in the pad.
+    pub fn led_dirty(&self) -> bool {
+        self.led_flash_dirty || self.led.as_ref().is_some_and(|l| l.dirty_since.is_some())
+    }
+
+    /// Commit the lighting to flash; a change still waiting for its write
+    /// goes first.
+    pub fn save_led(&mut self) {
+        let pending = self
+            .led
+            .as_mut()
+            .and_then(|l| l.dirty_since.take().map(|_| l.cfg.clone()));
+        if let Some(cfg) = pending {
+            self.send(Cmd::WriteLed(cfg));
+        }
+        self.send(Cmd::SaveLed);
+    }
+
+    /// Back to the lighting the pad keeps.
+    pub fn revert_led(&mut self) {
+        let Some(saved) = self.led_saved.clone() else {
+            return;
+        };
+        if let Some(i) = &self.info {
+            let choice = remember::Choice {
+                effect: saved.effect,
+                colours: saved.colours.clone(),
+            };
+            remember::store(&i.uid, saved.cfg.slot, choice);
+        }
+        self.send(Cmd::WriteLed(saved.cfg.clone()));
+        self.led = Some(saved);
+        self.led_flash_dirty = false;
     }
 
     pub fn profile_dirty(&self) -> bool {
@@ -207,6 +326,7 @@ impl App {
                     self.toast = Some(("Геймпад отключился".into(), true, Instant::now()));
                 }
                 self.info = None;
+                self.led_saved = None;
                 self.settings = None;
                 self.flags = None;
                 self.led = None;
@@ -235,14 +355,30 @@ impl App {
                 if matches!(effect, Effect::Solid | Effect::Breath | Effect::Flash) {
                     colours.truncate(1);
                 }
-                self.led = Some(LedEdit {
+                // a slot read afresh is what the pad keeps, unless this app
+                // changed it and did not save
+                let other_slot = self
+                    .led_saved
+                    .as_ref()
+                    .is_none_or(|s| s.cfg.slot != cfg.slot);
+                let led = LedEdit {
                     cfg,
                     effect,
                     colours,
                     dirty_since: None,
+                };
+                if !self.led_flash_dirty || other_slot {
+                    self.led_saved = Some(led.clone());
+                }
+                self.led = Some(led);
+            }
+            Event::LedSaved => {
+                self.led_flash_dirty = false;
+                self.led_saved = self.led.clone().map(|mut l| {
+                    l.dirty_since = None;
+                    l
                 });
             }
-            Event::LedSaved => self.led_flash_dirty = false,
             Event::Profile {
                 profile,
                 active,
@@ -330,8 +466,15 @@ impl eframe::App for App {
             if s.step(self, ctx) {
                 self.shots = Some(s);
             } else {
+                self.quit = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+        }
+        let (rect, maximized) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().maximized));
+        let maximized = maximized.unwrap_or(false);
+        self.geometry.1 = maximized;
+        if let Some(r) = rect.filter(|_| !maximized) {
+            self.geometry.0 = r.size().into();
         }
     }
 
@@ -341,13 +484,33 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if self.streaming {
+            self.streaming = false;
             self.send(Cmd::Stream(false));
             std::thread::sleep(Duration::from_millis(100));
         }
     }
 }
 
+/// One window's turn at the app, which outlives it.
+struct Window<'a>(&'a mut App);
+
+impl eframe::App for Window<'_> {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.0.logic(ctx, frame);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.0.ui(ui, frame);
+    }
+
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        self.0.on_exit(gl);
+    }
+}
+
 /// `APEX5_SCREENSHOTS=<dir>`: visit every page, save a PNG of each, then quit.
+/// `APEX5_SIZE=<w>x<h>` sets the window size, e.g. a tall one for whole pages.
+/// `APEX5_SCREEN_FILE=<picture>` opens it on the screen page (nothing is sent).
 /// It only switches pages: nothing is written to the pad except the input
 /// stream toggle that the input page always uses.
 struct Shots {
@@ -361,15 +524,18 @@ impl Shots {
     fn from_env() -> Option<Self> {
         let dir = std::env::var_os("APEX5_SCREENSHOTS")?;
         let mut queue = vec![
-            ("1-overview", Tab::Overview, ProfileTab::Buttons),
-            ("2-lighting", Tab::Lighting, ProfileTab::Buttons),
-            ("3-buttons", Tab::Profile, ProfileTab::Buttons),
-            ("4-macros", Tab::Profile, ProfileTab::Macros),
-            ("5-sticks", Tab::Profile, ProfileTab::Sticks),
-            ("6-triggers", Tab::Profile, ProfileTab::Triggers),
-            ("7-gyro", Tab::Profile, ProfileTab::Gyro),
-            ("8-settings", Tab::Settings, ProfileTab::Buttons),
-            ("9-input", Tab::Input, ProfileTab::Buttons),
+            ("01-overview", Tab::Overview, ProfileTab::Buttons),
+            ("02-lighting", Tab::Lighting, ProfileTab::Buttons),
+            ("03-screen", Tab::Screen, ProfileTab::Buttons),
+            ("04-buttons", Tab::Profile, ProfileTab::Buttons),
+            ("05-macros", Tab::Profile, ProfileTab::Macros),
+            ("06-sticks", Tab::Profile, ProfileTab::Sticks),
+            ("07-triggers", Tab::Profile, ProfileTab::Triggers),
+            ("08-vibration", Tab::Profile, ProfileTab::Vibration),
+            ("09-gyro", Tab::Profile, ProfileTab::Gyro),
+            ("10-dualsense", Tab::DualSense, ProfileTab::Buttons),
+            ("11-input", Tab::Input, ProfileTab::Buttons),
+            ("12-settings", Tab::Settings, ProfileTab::Buttons),
         ];
         queue.reverse();
         Some(Shots {
@@ -430,17 +596,51 @@ impl Shots {
 }
 
 fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Apex 5 Control")
-            .with_app_id("apex5-control")
-            .with_inner_size([1240.0, 820.0])
-            .with_min_inner_size([820.0, 560.0]),
-        ..Default::default()
+    let (tx, wake) = channel();
+    let window = tray::Window::default();
+    // a screenshot run leaves a running copy alone
+    let _instance = if std::env::var_os("APEX5_SCREENSHOTS").is_some() {
+        None
+    } else {
+        // another copy is running and shows its window instead
+        let Some(i) = tray::Instance::claim(window.clone(), tx.clone()) else {
+            return Ok(());
+        };
+        Some(i)
     };
-    eframe::run_native(
-        "Apex 5 Control",
-        options,
-        Box::new(|cc| Ok(Box::new(App::new(cc)))),
-    )
+    let size = std::env::var("APEX5_SIZE")
+        .ok()
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some([w.parse().ok()?, h.parse().ok()?])
+        })
+        .unwrap_or([1240.0, 820.0]);
+    let repaint = window.clone();
+    let h = worker::spawn(move || {
+        if let Some(ctx) = &*repaint.lock().unwrap() {
+            ctx.request_repaint();
+        }
+    });
+    let mut app = App::new(h, size);
+    // Closing the window ends `run_native`; with DualSense mode on the app
+    // stays in the tray and opens a new window when asked.
+    let r = loop {
+        let options = app.options();
+        let (a, w) = (&mut app, &window);
+        let r = eframe::run_native(
+            "Apex 5 Control",
+            options,
+            Box::new(move |cc| {
+                a.attach(&cc.egui_ctx);
+                *w.lock().unwrap() = Some(cc.egui_ctx.clone());
+                Ok(Box::new(Window(a)))
+            }),
+        );
+        *window.lock().unwrap() = None;
+        if r.is_err() || app.quit || !app.ds5().on || !app.background(&wake, &tx) {
+            break r;
+        }
+    };
+    app.shutdown();
+    r
 }

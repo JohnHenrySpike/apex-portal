@@ -75,6 +75,7 @@ pub struct State {
     games: Task<Vec<GamePreset>>,
     game_filter: String,
     game_selected: Option<i64>,
+    games_open: bool,
     /// The last preset put into the edited profile.
     pub game_applied: Option<String>,
     pictures: Task<Vec<Picture>>,
@@ -83,6 +84,16 @@ pub struct State {
     thumb_rx: Option<Receiver<(i64, Option<egui::ColorImage>)>>,
     /// Pictures whose thumbnail did not come.
     thumbs_failed: Vec<i64>,
+}
+
+impl State {
+    /// For a new window: the thumbnails belonged to the old one and are
+    /// made again from the downloaded files.
+    pub fn forget_textures(&mut self) {
+        self.thumbs.clear();
+        self.thumb_rx = None;
+        self.thumbs_failed.clear();
+    }
 }
 
 fn spinner(ui: &mut egui::Ui) {
@@ -137,8 +148,24 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     let Some(news) = &st.firmware.value else {
         return;
     };
+    let answer = |ui: &mut egui::Ui| {
+        if let Some(path) = cloud::firmware_answer().filter(|p| p.exists())
+            && ui
+                .link("Ответ сервера Flydigi (JSON)")
+                .on_hover_text(format!(
+                    "{}\nТам и описание изменений от Flydigi, обычно на китайском",
+                    path.display()
+                ))
+                .clicked()
+        {
+            let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+        }
+    };
     if news.is_empty() {
-        ui.label(RichText::new("Все прошивки последние").color(OK));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Все прошивки последние").color(OK));
+            answer(ui);
+        });
         return;
     }
     for n in news {
@@ -152,97 +179,141 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
             ))
             .color(WARN),
         );
-        if !n.notes.is_empty() {
-            ui.label(RichText::new(&n.notes).size(12.5).color(DIM));
-        }
     }
     ui.add_space(4.0);
     hint(
         ui,
         "Обновить прошивку можно только во Flydigi Space Station на Windows: \
-         это приложение геймпад не прошивает. Описание изменений — от Flydigi.",
+         это приложение геймпад не прошивает.",
     );
+    answer(ui);
 }
 
 // ------------------------------------------------------------------ game presets
 
 /// Flydigi's per-game trigger vibration, put into both triggers of the
-/// edited profile.
+/// edited profile: a line on the triggers page, the list in a dialog.
 pub fn game_presets(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
     st.games.poll();
-    card_titled(ui, "Пресеты курков для игр", |ui| {
-        hint(
+    card_titled(ui, "Пресеты Flydigi для игр", |ui| {
+        row(
             ui,
-            "Flydigi подбирает для игр, как вибрация рукояток передаётся в курки. Пресет ставит \
-             оба курка в режим «Вибрация игры» с настройками этой игры. Список берётся с сервера Flydigi.",
-        );
-        ui.add_space(6.0);
-        let busy = st.games.busy();
-        let Some(games) = &st.games.value else {
-            ui.horizontal(|ui| {
-                if widgets::secondary(ui, "Загрузить список игр", !busy).clicked()
+            "Вибрация игры по пресету",
+            "Оба курка — в режим «Вибрация игры» с настройками выбранной игры",
+            |ui| {
+                if widgets::secondary(ui, "Выбрать игру…", true)
+                    .on_hover_text(
+                        "Flydigi подбирает для игр, как вибрация рукояток передаётся в курки. \
+                         Список берётся с сервера Flydigi.",
+                    )
+                    .clicked()
                 {
-                    st.games.start(ui.ctx(), cloud::game_presets);
+                    st.games_open = true;
+                    if st.games.value.is_none() && !st.games.busy() {
+                        st.games.start(ui.ctx(), cloud::game_presets);
+                    }
                 }
+            },
+        );
+        if let Some(name) = &st.game_applied {
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!(
+                        "Поставлен пресет «{name}». Он начнёт работать после «Применить»; \
+                         вибрацию рукояток в профиле тоже нужно включить."
+                    ))
+                    .color(OK),
+                )
+                .wrap(),
+            );
+        }
+    });
+    if st.games_open {
+        game_dialog(st, p, ui);
+    }
+}
+
+fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
+    let mut close = false;
+    let r = egui::Modal::new(egui::Id::new("game_presets"))
+        .frame(
+            egui::Frame::new()
+                .fill(super::theme::CARD)
+                .stroke(Stroke::new(1.0, BORDER))
+                .corner_radius(CornerRadius::same(14))
+                .inner_margin(egui::Margin::same(20)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_width(520.0);
+            ui.label(
+                RichText::new("Пресет курков для игры")
+                    .font(super::theme::bold(18.0))
+                    .color(TEXT),
+            );
+            ui.add_space(8.0);
+            let busy = st.games.busy();
+            let Some(games) = &st.games.value else {
                 if busy {
                     spinner(ui);
                 }
-            });
-            if let Some(e) = &st.games.error {
-                error(ui, e);
-            }
-            return;
-        };
-
-        ui.add(
-            egui::TextEdit::singleline(&mut st.game_filter)
-                .hint_text(format!("Поиск среди {} игр", games.len()))
-                .desired_width(f32::INFINITY)
-                .margin(vec2(10.0, 6.0)),
-        );
-        ui.add_space(6.0);
-        let filter = st.game_filter.to_lowercase();
-        let mut apply = None;
-        egui::ScrollArea::vertical()
-            .max_height(220.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for g in games
-                    .iter()
-                    .filter(|g| g.name.to_lowercase().contains(&filter))
-                {
-                    let sel = st.game_selected == Some(g.id);
-                    let b = &g.bind[0];
-                    // the selection's own text colour reads on its fill
-                    let (name, detail) = (
-                        RichText::new(&g.name),
-                        RichText::new(format!("порог {} · сила {}", b.block, b.scale)).size(12.0),
-                    );
-                    let (name, detail) = if sel {
-                        (name, detail)
-                    } else {
-                        (name.color(TEXT), detail.color(DIM))
-                    };
-                    let r = ui.add(
-                        egui::Button::selectable(sel, name)
-                            .right_text(detail)
-                            .min_size(vec2(ui.available_width(), 28.0)),
-                    );
-                    if r.clicked() {
-                        st.game_selected = Some(g.id);
-                    }
-                    if r.double_clicked() {
-                        apply = Some(g.clone());
+                if let Some(e) = &st.games.error {
+                    error(ui, e);
+                    if widgets::secondary(ui, "Повторить", !busy).clicked() {
+                        st.games.start(ui.ctx(), cloud::game_presets);
                     }
                 }
-            });
-        ui.add_space(8.0);
-        let chosen = games.iter().find(|g| Some(g.id) == st.game_selected);
-        ui.horizontal(|ui| {
-            if widgets::primary(ui, "Поставить в оба курка", chosen.is_some()).clicked()
-            {
-                apply = chosen.cloned();
-            }
+                ui.add_space(8.0);
+                if widgets::secondary(ui, "Закрыть", true).clicked() {
+                    close = true;
+                }
+                return;
+            };
+            ui.add(
+                egui::TextEdit::singleline(&mut st.game_filter)
+                    .hint_text(format!("Поиск среди {} игр", games.len()))
+                    .desired_width(f32::INFINITY)
+                    .margin(vec2(10.0, 6.0)),
+            );
+            ui.add_space(6.0);
+            let filter = st.game_filter.to_lowercase();
+            let mut apply = None;
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for g in games
+                        .iter()
+                        .filter(|g| g.name.to_lowercase().contains(&filter))
+                    {
+                        let sel = st.game_selected == Some(g.id);
+                        let b = &g.bind[0];
+                        // the selection's own text colour reads on its fill
+                        let (name, detail) = (
+                            RichText::new(&g.name),
+                            RichText::new(format!("порог {} · сила {}", b.block, b.scale))
+                                .size(12.0),
+                        );
+                        let (name, detail) = if sel {
+                            (name, detail)
+                        } else {
+                            (name.color(TEXT), detail.color(DIM))
+                        };
+                        let r = ui.add(
+                            egui::Button::selectable(sel, name)
+                                .right_text(detail)
+                                .min_size(vec2(ui.available_width(), 28.0)),
+                        );
+                        if r.clicked() {
+                            st.game_selected = Some(g.id);
+                        }
+                        if r.double_clicked() {
+                            apply = Some(g.clone());
+                        }
+                    }
+                });
+            ui.add_space(8.0);
+            let chosen = games.iter().find(|g| Some(g.id) == st.game_selected);
             if let Some(g) = chosen {
                 let [l, r] = &g.bind;
                 let detail = |b: &apex5::profile::TriggerBind| {
@@ -255,23 +326,26 @@ pub fn game_presets(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
                 };
                 ui.label(RichText::new(text).size(12.5).color(DIM));
             }
-        });
-        if let Some(g) = apply {
-            p.set_vibration_preset(0, &g.bind[0]);
-            p.set_vibration_preset(1, &g.bind[1]);
-            st.game_applied = Some(g.name);
-        }
-        if let Some(name) = &st.game_applied {
             ui.add_space(4.0);
-            ui.label(
-                RichText::new(format!(
-                    "Поставлен пресет «{name}». Он начнёт работать после «Применить»; \
-                     вибрацию рукояток в профиле тоже нужно включить."
-                ))
-                .color(OK),
-            );
-        }
-    });
+            ui.horizontal(|ui| {
+                if widgets::primary(ui, "Поставить в оба курка", chosen.is_some()).clicked()
+                {
+                    apply = chosen.cloned();
+                }
+                if widgets::secondary(ui, "Отмена", true).clicked() {
+                    close = true;
+                }
+            });
+            if let Some(g) = apply {
+                p.set_vibration_preset(0, &g.bind[0]);
+                p.set_vibration_preset(1, &g.bind[1]);
+                st.game_applied = Some(g.name);
+                close = true;
+            }
+        });
+    if close || r.should_close() {
+        st.games_open = false;
+    }
 }
 
 // ------------------------------------------------------------------ screen pictures

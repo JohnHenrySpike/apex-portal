@@ -112,7 +112,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let reset = Cell::new(false);
     let wide = ui.available_width() > 860.0;
     let screen = format!("P{}", app.active + 1);
-    let mut st = (s, pressed, sticks, triggers, leds, bright);
+    let st = (s, pressed, sticks, triggers, leds, bright);
     let left = |(s, pressed, sticks, (lt, rt), leds, bright): &mut View, ui: &mut egui::Ui| {
         card(ui, |ui| {
             let w = ui.available_width();
@@ -171,22 +171,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if widgets::secondary(
-                    ui,
-                    "Сбросить след",
-                    gates.iter().any(|g| g.coverage() > 0.0),
-                )
-                .clicked()
-                {
-                    reset.set(true);
-                }
-                hint(
-                    ui,
-                    "Обведите стики по краю. Цифра — среднее отклонение от круга: \
-                     «Датчик» до обработки профилем, «Для игр» — то, что получают игры.",
-                );
-            });
+            hint(
+                ui,
+                "Обведите стики по краю: цифра — среднее отклонение от круга.",
+            );
+            ui.add_space(2.0);
+            if widgets::secondary(
+                ui,
+                "Сбросить след",
+                gates.iter().any(|g| g.coverage() > 0.0),
+            )
+            .on_hover_text("«Датчик» — до обработки профилем, «Для игр» — то, что получают игры.")
+            .clicked()
+            {
+                reset.set(true);
+            }
         });
         ui.add_space(12.0);
         card_titled(ui, "Курки", |ui| {
@@ -207,24 +206,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     };
+    // the motor test fills the room under the drawing
+    let mut test = (st, app);
     if wide {
-        widgets::split(ui, 0.58, &mut st, left, right);
+        widgets::split(
+            ui,
+            0.58,
+            &mut test,
+            |(st, app), ui| {
+                left(st, ui);
+                ui.add_space(12.0);
+                rumble(app, ui);
+            },
+            |(st, _), ui| right(st, ui),
+        );
     } else {
-        left(&mut st, ui);
+        left(&mut test.0, ui);
         ui.add_space(12.0);
-        right(&mut st, ui);
+        right(&mut test.0, ui);
+        ui.add_space(12.0);
+        rumble(test.1, ui);
     }
     if reset.get() {
-        app.reset_gates();
+        test.1.reset_gates();
     }
-    ui.add_space(12.0);
-    rumble(app, ui);
 }
 
 /// Sensor or what games get: picks what the drawing, sticks and triggers
 /// show.
 fn source(app: &mut App, ui: &mut egui::Ui, have_output: bool) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(have_output, |ui| {
             widgets::segmented(
                 ui,
@@ -252,16 +263,16 @@ fn source(app: &mut App, ui: &mut egui::Ui, have_output: bool) {
 
 /// Runs the grip motors for under a second at the chosen strengths.
 fn rumble(app: &mut App, ui: &mut egui::Ui) {
-    card_titled(ui, "Вибрация", |ui| {
+    card_titled(ui, "Проверка моторов", |ui| {
         ui.spacing_mut().slider_width = (ui.available_width() - 260.0).clamp(80.0, 320.0);
         let (mut l, mut r) = app.rumble;
         ui.horizontal(|ui| {
             ui.label(RichText::new("Левый мотор").color(DIM));
-            ui.add(egui::Slider::new(&mut l, 0..=100).suffix(" %"));
+            ui.add(widgets::slider(&mut l, 0..=100).suffix(" %"));
         });
         ui.horizontal(|ui| {
             ui.label(RichText::new("Правый мотор").color(DIM));
-            ui.add(egui::Slider::new(&mut r, 0..=100).suffix(" %"));
+            ui.add(widgets::slider(&mut r, 0..=100).suffix(" %"));
         });
         app.rumble = (l, r);
         ui.add_space(4.0);

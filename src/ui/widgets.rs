@@ -81,18 +81,39 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     r
 }
 
-/// A settings row: title and hint on the left, a control on the right.
+/// A settings row: title and hint on the left, a control on the right. The
+/// text wraps in the room the control leaves, measured on the last frame.
 pub fn row<R>(ui: &mut Ui, title: &str, hint_text: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+    let id = ui.next_auto_id().with("row_control");
+    let cw: f32 = ui.data(|d| d.get_temp(id)).unwrap_or(120.0);
+    let gap = 16.0;
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new(title).font(theme::medium(14.5)).color(TEXT));
-            if !hint_text.is_empty() {
-                ui.label(RichText::new(hint_text).size(12.5).color(DIM));
-            }
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control)
-            .inner
+        let tw = (ui.available_width() - cw - gap).max(120.0);
+        // as tall as the row starts, so the centred row puts it at the top
+        let h = ui.spacing().interact_size.y;
+        ui.allocate_ui_with_layout(
+            vec2(tw, h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_width(tw);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add(
+                    egui::Label::new(RichText::new(title).font(theme::medium(14.5)).color(TEXT))
+                        .wrap(),
+                );
+                if !hint_text.is_empty() {
+                    ui.add(egui::Label::new(RichText::new(hint_text).size(12.5).color(DIM)).wrap());
+                }
+            },
+        );
+        let r = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+        // the child's rect hugs what the control drew
+        let used = r.response.rect.width();
+        if (used - cw).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(id, used));
+            ui.ctx().request_discard("row control width");
+        }
+        r.inner
     })
     .inner
 }
@@ -151,6 +172,16 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
     changed
 }
 
+/// A slider that only clamps what the user enters. egui's default clamps the
+/// value on every frame, so a byte out of range would be written back just
+/// by looking at a page.
+pub fn slider<Num: egui::emath::Numeric>(
+    value: &mut Num,
+    range: std::ops::RangeInclusive<Num>,
+) -> egui::Slider<'_> {
+    egui::Slider::new(value, range).clamping(egui::SliderClamping::Edits)
+}
+
 /// Accent-filled call-to-action.
 pub fn primary(ui: &mut Ui, text: &str, enabled: bool) -> Response {
     let b = egui::Button::new(RichText::new(text).color(if enabled { on_accent() } else { FAINT }))
@@ -166,6 +197,84 @@ pub fn secondary(ui: &mut Ui, text: &str, enabled: bool) -> Response {
         .corner_radius(CornerRadius::same(10))
         .min_size(vec2(0.0, 34.0));
     ui.add_enabled(enabled, b)
+}
+
+/// The bar under a page that edits what the pad keeps: a status dot, what
+/// state the edits are in, and the page's buttons on the right.
+pub fn save_bar(
+    ui: &mut Ui,
+    id: &str,
+    dot: Color32,
+    title: &str,
+    sub: &str,
+    buttons: impl FnOnce(&mut Ui),
+) {
+    egui::Panel::bottom(id.to_owned())
+        .frame(
+            egui::Frame::new()
+                .fill(theme::SIDEBAR)
+                .stroke(Stroke::new(1.0, BORDER))
+                .inner_margin(egui::Margin::symmetric(28, 12)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(12.0, 36.0), Sense::hover());
+                ui.painter().circle_filled(rect.center(), 4.0, dot);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.label(RichText::new(title).font(theme::medium(14.0)).color(TEXT));
+                    ui.label(RichText::new(sub).size(12.0).color(DIM));
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), buttons);
+            });
+        });
+}
+
+/// A clickable line: a name on the left, its value and a chevron on the
+/// right.
+pub fn link_row(ui: &mut Ui, name: &str, value: &str, value_colour: Color32) -> Response {
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    let p = ui.painter();
+    if r.hovered() {
+        p.rect_filled(rect, CornerRadius::same(8), CARD_HI);
+    }
+    let y = rect.center().y;
+    p.text(
+        pos2(rect.left() + 10.0, y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(13.5),
+        DIM,
+    );
+    let chevron = rect.right() - 12.0;
+    let c = if r.hovered() { TEXT } else { FAINT };
+    p.line_segment(
+        [pos2(chevron - 4.0, y - 4.0), pos2(chevron, y)],
+        Stroke::new(1.5, c),
+    );
+    p.line_segment(
+        [pos2(chevron, y), pos2(chevron - 4.0, y + 4.0)],
+        Stroke::new(1.5, c),
+    );
+    // the value gives way to the name, cut short if it must
+    let name_w = p
+        .layout_no_wrap(name.to_owned(), egui::FontId::proportional(13.5), DIM)
+        .size()
+        .x;
+    let room = (chevron - 14.0 - (rect.left() + 10.0 + name_w + 16.0)).max(20.0);
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        value.to_owned(),
+        theme::medium(13.5),
+        value_colour,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let g = ui.painter().layout_job(job);
+    ui.painter().galley(
+        pos2(chevron - 14.0 - g.size().x, y - g.size().y / 2.0),
+        g,
+        value_colour,
+    );
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Small rounded tag with an optional status dot.
@@ -265,6 +374,13 @@ pub enum Icon {
     Input,
     Refresh,
     Shield,
+    Screen,
+    Waves,
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+    More,
 }
 
 /// Simple line icons drawn into `rect`.
@@ -353,6 +469,80 @@ pub fn icon(p: &egui::Painter, rect: Rect, which: Icon, colour: Color32) {
             p.add(egui::Shape::closed_line(pts, st));
             p.line_segment([at(-0.3, 0.0), at(-0.05, 0.28)], st);
             p.line_segment([at(-0.05, 0.28), at(0.38, -0.25)], st);
+        }
+        Icon::Screen => {
+            // The pad's little 2:1 screen with a picture on it.
+            let body = Rect::from_min_max(at(-0.95, -0.55), at(0.95, 0.55));
+            p.rect_stroke(
+                body,
+                CornerRadius::same((0.2 * s) as u8),
+                st,
+                StrokeKind::Middle,
+            );
+            p.add(egui::Shape::line(
+                vec![
+                    at(-0.6, 0.3),
+                    at(-0.2, -0.12),
+                    at(0.1, 0.15),
+                    at(0.35, -0.05),
+                    at(0.6, 0.3),
+                ],
+                st,
+            ));
+        }
+        Icon::Waves => {
+            // Trigger feedback: a pulse between two brackets.
+            let pts: Vec<_> = (0..=24)
+                .map(|i| {
+                    let x = -0.55 + i as f32 / 24.0 * 1.1;
+                    at(x, 0.45 * (x * 9.0).sin() * (1.0 - (x / 0.55).abs()))
+                })
+                .collect();
+            p.add(egui::Shape::line(pts, st));
+            for k in [-1.0f32, 1.0] {
+                p.add(egui::Shape::line(
+                    vec![at(0.8 * k, -0.7), at(0.95 * k, 0.0), at(0.8 * k, 0.7)],
+                    st,
+                ));
+            }
+        }
+        Icon::Minimize => {
+            p.line_segment([at(-0.7, 0.0), at(0.7, 0.0)], st);
+        }
+        Icon::Maximize => {
+            p.rect_stroke(
+                Rect::from_min_max(at(-0.65, -0.65), at(0.65, 0.65)),
+                CornerRadius::same(2),
+                st,
+                StrokeKind::Middle,
+            );
+        }
+        Icon::Restore => {
+            p.rect_stroke(
+                Rect::from_min_max(at(-0.7, -0.4), at(0.4, 0.7)),
+                CornerRadius::same(2),
+                st,
+                StrokeKind::Middle,
+            );
+            p.add(egui::Shape::line(
+                vec![
+                    at(-0.4, -0.4),
+                    at(-0.4, -0.7),
+                    at(0.7, -0.7),
+                    at(0.7, 0.4),
+                    at(0.4, 0.4),
+                ],
+                st,
+            ));
+        }
+        Icon::Close => {
+            p.line_segment([at(-0.62, -0.62), at(0.62, 0.62)], st);
+            p.line_segment([at(-0.62, 0.62), at(0.62, -0.62)], st);
+        }
+        Icon::More => {
+            for x in [-0.6f32, 0.0, 0.6] {
+                p.circle_filled(at(x, 0.0), 0.13 * s, colour);
+            }
         }
     }
 }
