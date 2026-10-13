@@ -1,4 +1,5 @@
 /target
+/dist
 
 # Flydigi installers kept next to the checkout for reverse engineering
 *.exe

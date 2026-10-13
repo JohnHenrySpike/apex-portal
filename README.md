@@ -91,6 +91,9 @@ Steam Input у игры оставьте по умолчанию: No Man's Sky �
 
 ## Сборка и установка
 
+Готовые сборки для x86_64 лежат на странице Releases (архив `apex5-vX.Y.Z-linux-x86_64.tar.gz`),
+сборки ветки `dev` — в артефактах её запусков в Actions. Собрать такой же архив локально: `tools/dist.sh ИМЯ`.
+
 ```bash
 cargo build --release
 install -Dm755 target/release/apex5 ~/.local/bin/apex5
