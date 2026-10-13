@@ -13,6 +13,7 @@ use crate::bridge::{self, Bridge};
 use crate::device::{self, Flags, Info, InputState, Settings};
 use crate::evdev;
 use crate::hid::Device;
+use crate::lang::t;
 use crate::lighting::LedConfig;
 use crate::profile::{self, Profile};
 use crate::screen::{self, Upload};
@@ -165,7 +166,7 @@ impl Worker {
                 }
                 Ok(cmd) => {
                     if self.dev.is_none() {
-                        self.send(Event::Error("геймпад не подключён".into()));
+                        self.send(Event::Error(t("controller not connected").into()));
                         continue;
                     }
                     self.send(Event::Busy(true));
@@ -229,9 +230,9 @@ impl Worker {
                         self.fail(e);
                     }
                 }
-                Ok(info) => self.send(Event::Disconnected(format!(
-                    "подключено неподдерживаемое устройство (тип {})",
-                    info.device_type
+                Ok(info) => self.send(Event::Disconnected(crate::tr!(
+                    "unsupported device connected (type {kind})",
+                    kind = info.device_type
                 ))),
                 Err(e) => self.send(Event::Disconnected(format!("{e:#}"))),
             },
@@ -363,19 +364,22 @@ impl Worker {
             Cmd::SwitchProfile(slot) => {
                 let st = profile::status(self.dev())?;
                 self.load_profile(slot, slot, st.versions[slot as usize])?;
-                self.send(Event::Message(format!("Активен профиль {}", slot + 1)));
+                self.send(Event::Message(crate::tr!(
+                    "Profile {slot} active",
+                    slot = slot + 1
+                )));
             }
             Cmd::WriteProfile(new) => {
                 let old = self.profile.clone().filter(|o| o.slot == new.slot);
                 let Some(old) = old else {
-                    anyhow::bail!("профиль на геймпаде сменился — обновите")
+                    anyhow::bail!(t("the profile on the controller changed — refresh"))
                 };
                 let st = profile::status(self.dev())?;
                 if st.active != new.slot {
-                    anyhow::bail!(
-                        "на геймпаде переключён профиль ({}), изменения не записаны",
-                        st.active + 1
-                    );
+                    anyhow::bail!(crate::tr!(
+                        "the controller switched to profile {active}, changes not written",
+                        active = st.active + 1
+                    ));
                 }
                 let n = profile::write(self.dev(), &new, &old)?;
                 let force_changed = (0..2).any(|s| new.force(s) != old.force(s));
@@ -384,13 +388,14 @@ impl Worker {
                     self.engage(&new, true)?;
                 }
                 self.send(Event::ProfileWritten(new));
-                self.send(Event::Message(format!(
-                    "Записано в геймпад ({n} пакетов). Не сохранено во флеш."
+                self.send(Event::Message(crate::tr!(
+                    "Written to the controller ({n} packets). Not saved to flash.",
+                    n
                 )));
             }
             Cmd::SaveProfile => {
                 let Some(mut p) = self.profile.clone() else {
-                    anyhow::bail!("профиль не загружен")
+                    anyhow::bail!(t("profile not loaded"))
                 };
                 let st = profile::status(self.dev())?;
                 let tag = profile::next_tag(st.versions[p.slot as usize]);
@@ -403,16 +408,16 @@ impl Worker {
                     saved_tag: tag,
                 });
                 self.send(Event::Message(
-                    "Профиль сохранён во флеш-память геймпада".into(),
+                    t("Profile saved to the controller's flash").into(),
                 ));
             }
             Cmd::WriteLed(new) => {
                 let st = profile::status(self.dev())?;
                 if st.active != new.slot {
-                    anyhow::bail!(
-                        "на геймпаде переключён профиль ({}), подсветка не записана",
-                        st.active + 1
-                    );
+                    anyhow::bail!(crate::tr!(
+                        "the controller switched to profile {active}, lighting not written",
+                        active = st.active + 1
+                    ));
                 }
                 let old = self.led.clone();
                 new.write(self.dev(), old.as_ref())?;
@@ -424,7 +429,7 @@ impl Worker {
                 profile::save(self.dev(), st.active, st.versions[st.active as usize])?;
                 self.send(Event::LedSaved);
                 self.send(Event::Message(
-                    "Подсветка сохранена в памяти геймпада".into(),
+                    t("Lighting saved to the controller's memory").into(),
                 ));
             }
             Cmd::ResetAll(lighting) => {
@@ -442,9 +447,9 @@ impl Worker {
                     Ok(n)
                 })?;
                 self.send(Event::Message(if n == 0 {
-                    "Все профили уже заводские".into()
+                    t("All profiles are already factory").into()
                 } else {
-                    format!("Сброшено профилей: {n}, сохранено во флеш")
+                    crate::tr!("Profiles reset: {n}, saved to flash", n)
                 }));
             }
             Cmd::Install {
@@ -454,9 +459,12 @@ impl Worker {
             } => {
                 let changed = self.keeping_slot(|w| w.put(slot, |old| p.onto(old), led))?;
                 self.send(Event::Message(if changed {
-                    format!("Записано в профиль {} и сохранено во флеш", slot + 1)
+                    crate::tr!(
+                        "Written to profile {slot} and saved to flash",
+                        slot = slot + 1
+                    )
                 } else {
-                    format!("Профиль {} уже такой", slot + 1)
+                    crate::tr!("Profile {slot} is already like this", slot = slot + 1)
                 }));
             }
             Cmd::SetThirdParty(on) => {
@@ -477,7 +485,7 @@ impl Worker {
                 device::write_nickname(self.dev(), &n)?;
                 let info = device::read_info(self.dev())?;
                 self.send(Event::Connected(info));
-                self.send(Event::Message("Имя записано".into()));
+                self.send(Event::Message(t("Name written").into()));
             }
             Cmd::TestRumble(left, right) => {
                 let run = device::rumble(self.dev(), left, right);
@@ -503,7 +511,7 @@ impl Worker {
                     self.stop_bridge();
                     return Err(e);
                 }
-                self.send(Event::Message("Режим DualSense включён".into()));
+                self.send(Event::Message(t("DualSense mode on").into()));
             }
             Cmd::DualSense(true) => {}
             Cmd::DualSenseResistance(pct) => {
@@ -515,7 +523,7 @@ impl Worker {
             }
             Cmd::DualSense(false) => {
                 self.stop_bridge();
-                self.send(Event::Message("Режим DualSense выключен".into()));
+                self.send(Event::Message(t("DualSense mode off").into()));
             }
             Cmd::Stream(on) => {
                 if on && !self.streaming {
@@ -543,13 +551,13 @@ impl Worker {
         let retry = screen::find_port().is_some();
         if !retry {
             let Some(d) = self.dev.as_mut() else {
-                anyhow::bail!("геймпад не подключён")
+                anyhow::bail!(t("controller not connected"))
             };
             if !screen::rule_installed() {
-                anyhow::bail!(screen::RULE_HINT);
+                anyhow::bail!(screen::rule_hint());
             }
             if !device::read_info(d)?.wired {
-                anyhow::bail!("картинку можно загрузить только по кабелю");
+                anyhow::bail!(t("a picture can be uploaded by cable only"));
             }
             if self.raw_held == Some(false) {
                 device::set_stream(d, false)?;
@@ -564,7 +572,9 @@ impl Worker {
         self.flags = None;
         self.input.lock().unwrap().stop();
         let dev = self.dev.take();
-        self.send(Event::Disconnected("Загрузка картинки на экран".into()));
+        self.send(Event::Disconnected(
+            t("Uploading the picture to the screen").into(),
+        ));
         screen::upload(dev, &up, &mut |s| self.send(Event::Screen(s)))?;
         // the screen saves and the pad restarts; do not talk to it meanwhile
         thread::sleep(Duration::from_secs(20));
@@ -673,7 +683,10 @@ impl Worker {
             Ok(a) => a,
             Err(e) => {
                 self.stop_bridge();
-                self.send(Event::Error(format!("режим DualSense остановлен: {e:#}")));
+                self.send(Event::Error(crate::tr!(
+                    "DualSense mode stopped: {e}",
+                    e = format!("{e:#}")
+                )));
                 return;
             }
         };

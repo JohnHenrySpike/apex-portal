@@ -12,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::device::Info;
+use crate::lang::{key, t};
 use crate::profile::TriggerBind;
 
 const API: &str = "https://api.flydigi.com/pc";
@@ -39,7 +40,7 @@ fn with_headers<B>(r: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
 
 /// The envelope is `{code|status, message, data}`; 0 or 200 is success.
 fn unwrap(body: &str) -> Result<Value> {
-    let v: Value = serde_json::from_str(body).context("сервер ответил не JSON")?;
+    let v: Value = serde_json::from_str(body).context(t("the server did not answer in JSON"))?;
     let code = v
         .get("code")
         .or_else(|| v.get("status"))
@@ -49,7 +50,10 @@ fn unwrap(body: &str) -> Result<Value> {
             .get("message")
             .or_else(|| v.get("msg"))
             .and_then(Value::as_str);
-        bail!("сервер ответил ошибкой: {}", msg.unwrap_or("без описания"));
+        bail!(crate::tr!(
+            "the server answered with an error: {reason}",
+            reason = msg.unwrap_or(t("no description"))
+        ));
     }
     Ok(v.get("data").cloned().unwrap_or(Value::Null))
 }
@@ -57,7 +61,7 @@ fn unwrap(body: &str) -> Result<Value> {
 fn get(path: &str) -> Result<Value> {
     let mut r = with_headers(agent(API_TIMEOUT).get(format!("{API}{path}")))
         .call()
-        .context("нет связи с сервером Flydigi")?;
+        .context(t("no connection to Flydigi's server"))?;
     unwrap(&r.body_mut().read_to_string()?)
 }
 
@@ -65,7 +69,7 @@ fn post(path: &str, body: &Value) -> Result<Value> {
     let mut r = with_headers(agent(API_TIMEOUT).post(format!("{API}{path}")))
         .header("Content-Type", "application/json")
         .send(body.to_string())
-        .context("нет связи с сервером Flydigi")?;
+        .context(t("no connection to Flydigi's server"))?;
     unwrap(&r.body_mut().read_to_string()?)
 }
 
@@ -197,7 +201,7 @@ impl Picture {
 
     /// The file, downloaded once and then taken from the cache.
     pub fn fetch(&self) -> Result<PathBuf> {
-        let path = self.path().context("не найден домашний каталог")?;
+        let path = self.path().context(t("home directory not found"))?;
         if path.metadata().is_ok_and(|m| m.len() > 0) {
             return Ok(path);
         }
@@ -239,14 +243,14 @@ fn parse_pictures(data: &Value) -> Vec<Picture> {
 /// translated.
 fn picture_title(t: &str) -> String {
     const NAMES: [(&str, &str); 4] = [
-        ("精选动画", "Анимация "),
-        ("精选图片", "Картинка "),
-        ("第三方无版权", "Свободная картинка "),
-        ("蛇年", "Год змеи"),
+        ("精选动画", key("Animation ")),
+        ("精选图片", key("Picture ")),
+        ("第三方无版权", key("Free picture ")),
+        ("蛇年", key("Year of the Snake")),
     ];
-    for (zh, ru) in NAMES {
+    for (zh, name) in NAMES {
         if let Some(rest) = t.strip_prefix(zh) {
-            return format!("{ru}{rest}").trim().to_string();
+            return format!("{}{rest}", crate::lang::t(name)).trim().to_string();
         }
     }
     t.to_string()
@@ -255,13 +259,15 @@ fn picture_title(t: &str) -> String {
 /// A file from one of Flydigi's CDN links, tried twice.
 pub fn download(url: &str) -> Result<Vec<u8>> {
     if !url.starts_with("https://") {
-        bail!("ссылка не по https: {url}");
+        bail!(crate::tr!("the link is not https: {url}", url));
     }
     let once = || -> Result<Vec<u8>> {
         let mut r = agent(FILE_TIMEOUT).get(url).call()?;
         Ok(r.body_mut().with_config().limit(MAX_FILE).read_to_vec()?)
     };
-    once().or_else(|_| once()).context("файл не скачался")
+    once()
+        .or_else(|_| once())
+        .context(t("the file did not download"))
 }
 
 // ------------------------------------------------------------------ game trigger presets
@@ -415,7 +421,7 @@ mod tests {
         ]);
         let p = parse_pictures(&data);
         assert_eq!(p.len(), 1);
-        assert_eq!(p[0].title, "Анимация 1");
+        assert_eq!(p[0].title, "Animation 1");
         assert!(p[0].path().unwrap().ends_with("screen/106.gif"));
     }
 }

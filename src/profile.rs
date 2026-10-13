@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use std::time::Duration;
 
 use crate::hid::{Device, blob};
+use crate::lang::{key, t};
 
 pub const SIZE: usize = 840;
 pub const SLOTS: u8 = 4;
@@ -113,10 +114,11 @@ pub struct Stick {
     pub bank: [u8; 9],
 }
 
+/// Kind, name, p1, p2.
 pub const STICK_PRESETS: [(u8, &str, (u8, u8), (u8, u8)); 3] = [
-    (0, "Стандарт", (63, 63), (127, 127)),
-    (1, "Быстрый", (64, 96), (127, 127)),
-    (2, "Плавный", (64, 32), (127, 127)),
+    (0, key("Standard"), (63, 63), (127, 127)),
+    (1, key("Fast"), (64, 96), (127, 127)),
+    (2, key("Smooth"), (64, 32), (127, 127)),
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -559,19 +561,25 @@ impl Profile {
 
     pub fn set_macros(&mut self, macros: &[Macro]) -> Result<()> {
         if macros.len() > MACRO_MAX {
-            bail!("не больше {MACRO_MAX} макросов");
+            bail!(crate::tr!("no more than {MACRO_MAX} macros", MACRO_MAX));
         }
         let total: usize = macros.iter().map(|m| m.steps.len()).sum();
         if total > MACRO_STEPS_MAX {
-            bail!("в макросах всего не больше {MACRO_STEPS_MAX} шагов");
+            bail!(crate::tr!(
+                "no more than {MACRO_STEPS_MAX} steps in all macros",
+                MACRO_STEPS_MAX
+            ));
         }
         let mut keys = std::collections::HashSet::new();
         for m in macros {
             if !keys.insert(m.key) {
-                bail!("на кнопке {} уже есть макрос", key_name(m.key));
+                bail!(crate::tr!(
+                    "button {key} already has a macro",
+                    key = key_name(m.key)
+                ));
             }
             if m.steps.iter().any(|s| !XINPUT_TARGETS.contains(&s.key)) {
-                bail!("в шаге макроса можно использовать только обычные кнопки Xbox");
+                bail!(t("a macro step can only use standard Xbox buttons"));
             }
         }
         // Keys that had a macro and no longer do go back to identity; keys
@@ -661,7 +669,7 @@ impl Profile {
     pub fn check_triggers(&self) -> Result<()> {
         for o in FORCE {
             if self.blob[o] >= FORCE_MODES || !matches!(self.blob[o + 1], 0 | 2) {
-                bail!("запись отменена: неизвестный режим курка");
+                bail!(t("write cancelled: unknown trigger mode"));
             }
         }
         Ok(())
@@ -685,7 +693,9 @@ pub struct Status {
 
 pub fn status(dev: &mut Device) -> Result<Status> {
     let Some(r) = dev.query(CMD_STATUS, &[], Duration::from_secs(1))? else {
-        bail!("нет ответа на запрос профиля (геймпад спит? нажмите кнопку)")
+        bail!(t(
+            "no answer to the profile request (is the controller asleep? press a button)"
+        ))
     };
     let raw = r.at(6);
     let active = match raw {
@@ -718,7 +728,7 @@ pub fn write(dev: &mut Device, new: &Profile, old: &Profile) -> Result<usize> {
         Some(&old.blob),
     )?;
     if new.macro_bytes_differ(old) && !dev.acked(CMD_APPLY, &[new.slot])? {
-        bail!("геймпад не подтвердил применение профиля");
+        bail!(t("the controller did not confirm applying the profile"));
     }
     Ok(n)
 }
@@ -727,17 +737,17 @@ pub fn write(dev: &mut Device, new: &Profile, old: &Profile) -> Result<usize> {
 pub fn save(dev: &mut Device, slot: u8, tag: u16) -> Result<()> {
     let st = status(dev)?;
     if st.active != slot {
-        bail!(
-            "на геймпаде сейчас активен профиль {}, а не {}",
-            st.active + 1,
-            slot + 1
-        );
+        bail!(crate::tr!(
+            "profile {active} is active on the controller, not {slot}",
+            active = st.active + 1,
+            slot = slot + 1
+        ));
     }
     if dev
         .query(CMD_SAVE, &tag.to_le_bytes(), Duration::from_secs(10))?
         .is_none()
     {
-        bail!("геймпад не подтвердил сохранение");
+        bail!(t("the controller did not confirm saving"));
     }
     Ok(())
 }

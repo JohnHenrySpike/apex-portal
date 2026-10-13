@@ -19,6 +19,7 @@ use image::imageops::{self, FilterType};
 use image::{AnimationDecoder, ImageFormat, ImageReader, Rgba, RgbaImage};
 
 use crate::hid::Device;
+use crate::lang::t;
 
 pub const W: u32 = 160;
 pub const H: u32 = 80;
@@ -154,7 +155,7 @@ pub fn decode(path: &Path) -> Result<Source> {
         .with_context(|| format!("read {}", path.display()))?
         .with_guessed_format()?;
     if reader.format() != Some(ImageFormat::Gif) {
-        let img = reader.decode().context("не удалось прочитать картинку")?;
+        let img = reader.decode().context(t("couldn't read the picture"))?;
         return Ok(Source {
             frames: vec![shrink(img.to_rgba8(), STILL_KEEP)],
             interval_ms: None,
@@ -162,7 +163,7 @@ pub fn decode(path: &Path) -> Result<Source> {
         });
     }
     let file = BufReader::new(File::open(path)?);
-    let gif = image::codecs::gif::GifDecoder::new(file).context("не удалось прочитать GIF")?;
+    let gif = image::codecs::gif::GifDecoder::new(file).context(t("couldn't read the GIF"))?;
     let mut frames = Vec::new();
     let mut total_ms = 0;
     let mut cut = false;
@@ -171,13 +172,13 @@ pub fn decode(path: &Path) -> Result<Source> {
             cut = true;
             break;
         }
-        let f = f.context("не удалось прочитать кадр GIF")?;
+        let f = f.context(t("couldn't read a GIF frame"))?;
         let (n, d) = f.delay().numer_denom_ms();
         total_ms += n / d.max(1);
         frames.push(shrink(f.into_buffer(), GIF_KEEP));
     }
     if frames.is_empty() {
-        bail!("в GIF нет кадров");
+        bail!(t("the GIF has no frames"));
     }
     let avg = total_ms / frames.len() as u32;
     // browsers play a zero delay at 100 ms
@@ -317,10 +318,13 @@ pub struct Upload {
 impl Upload {
     pub fn new(frames: &[Vec<u8>], interval_ms: u32) -> Result<Self> {
         if frames.is_empty() || frames.len() > MAX_FRAMES {
-            bail!("кадров должно быть от 1 до {MAX_FRAMES}");
+            bail!(crate::tr!(
+                "there must be 1 to {MAX_FRAMES} frames",
+                MAX_FRAMES
+            ));
         }
         if frames.iter().any(|f| f.len() != FRAME || f[..4] != HEADER) {
-            bail!("кадр не в формате экрана");
+            bail!(t("a frame isn't in the screen's format"));
         }
         let mut up = Upload {
             data: frames.concat(),
@@ -341,14 +345,20 @@ impl Upload {
     /// `default_screen_image_<deviceType>.bin` from Space Station.
     pub fn factory(data: Vec<u8>) -> Result<Self> {
         if data.is_empty() || !data.len().is_multiple_of(FRAME) {
-            bail!("размер файла не кратен кадру экрана ({FRAME} байт)");
+            bail!(crate::tr!(
+                "the file size isn't a multiple of a screen frame ({FRAME} bytes)",
+                FRAME
+            ));
         }
         let frames = data.len() / FRAME;
         if frames > 255 {
-            bail!("в файле {frames} кадров, больше 255");
+            bail!(crate::tr!(
+                "the file has {frames} frames, more than 255",
+                frames
+            ));
         }
         if data.chunks(FRAME).any(|f| f[..4] != HEADER) {
-            bail!("файл не похож на анимацию экрана Flydigi");
+            bail!(t("the file doesn't look like a Flydigi screen animation"));
         }
         Ok(Upload {
             data,
@@ -455,8 +465,12 @@ pub fn rule_installed() -> bool {
     })
 }
 
-pub const RULE_HINT: &str = "Нет правила udev для порта экрана ffaa:5555: без него порт \
-    доступен только root. Установите его кнопкой «Установить правило» или по README";
+pub fn rule_hint() -> &'static str {
+    t(
+        "No udev rule for the screen port ffaa:5555: without it only root can use the port. \
+         Install it with the \"Install rule\" button or by the README",
+    )
+}
 
 /// Puts the screen chip into its bootloader unless it already is, then
 /// sends `up`. Takes the pad's HID handle and drops it: the pad restarts at
@@ -469,9 +483,9 @@ pub fn upload(dev: Option<Device>, up: &Upload, progress: &mut dyn FnMut(Stage))
         }
         None => {
             if !rule_installed() {
-                bail!(RULE_HINT);
+                bail!(rule_hint());
             }
-            let mut dev = dev.ok_or_else(|| anyhow!("геймпад не подключён"))?;
+            let mut dev = dev.ok_or_else(|| anyhow!(t("the controller isn't connected")))?;
             crate::device::enter_screen_upload(&mut dev)?;
             drop(dev);
             progress(Stage::Switching);
@@ -482,10 +496,10 @@ pub fn upload(dev: Option<Device>, up: &Upload, progress: &mut dyn FnMut(Stage))
                     break p;
                 }
                 if Instant::now() > until {
-                    bail!(
-                        "порт экрана не появился. Выключите и включите геймпад \
-                         переключателем на задней стороне"
-                    );
+                    bail!(t(
+                        "the screen port didn't appear. Turn the controller off and on \
+                         with the switch on its back"
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
@@ -506,7 +520,13 @@ pub fn upload(dev: Option<Device>, up: &Upload, progress: &mut dyn FnMut(Stage))
         }
     }
     let mut s = Session {
-        port: port_file.ok_or_else(|| anyhow!("нет доступа к {}. {RULE_HINT}", port.display()))?,
+        port: port_file.ok_or_else(|| {
+            anyhow!(crate::tr!(
+                "no access to {port}. {hint}",
+                port = port.display(),
+                hint = rule_hint()
+            ))
+        })?,
         base: 0,
         size: up.data.len() as u32,
     };
@@ -580,12 +600,15 @@ impl Session {
             restore: up.restore_default,
         })?;
         if r.len() < 8 {
-            bail!("экран не сообщил адрес картинки");
+            bail!(t("the screen didn't report the picture address"));
         }
         let base = u32::from_le_bytes([r[4], r[5], r[6], r[7]]);
         if base < PROGRAM_END || !base.is_multiple_of(4096) || base.checked_add(self.size).is_none()
         {
-            bail!("экран сообщил странный адрес картинки {base:#x}, загрузка остановлена");
+            bail!(crate::tr!(
+                "the screen reported an odd picture address {base}, upload stopped",
+                base = format!("{base:#x}")
+            ));
         }
         self.base = base;
         // Flydigi waits after the address too
@@ -618,16 +641,25 @@ impl Session {
         let span = self.base as u64..self.base as u64 + self.size.next_multiple_of(4096) as u64;
         match *req {
             Req::Erase(a) | Req::Write(a, _) if !span.contains(&(a as u64)) => {
-                bail!("адрес {a:#x} вне области картинки")
+                bail!(crate::tr!(
+                    "address {a} is outside the picture area",
+                    a = format!("{a:#x}")
+                ))
             }
-            Req::Write(_, d) if d.is_empty() || d.len() > 55 => bail!("пакет данных не по размеру"),
+            Req::Write(_, d) if d.is_empty() || d.len() > 55 => {
+                bail!(t("data packet of a wrong size"))
+            }
             _ => {}
         }
         let bytes = req.bytes();
         let op = bytes[0];
         let r = self.port.exchange(&bytes, REPLY_TIMEOUT)?;
         if r.len() < 2 || r[1] != op {
-            bail!("экран ответил не на тот запрос ({op}): {r:02x?}");
+            bail!(crate::tr!(
+                "the screen answered a different request ({op}): {r}",
+                op,
+                r = format!("{r:02x?}")
+            ));
         }
         Ok(r)
     }
@@ -697,7 +729,7 @@ impl Port {
     fn exchange(&mut self, req: &[u8], timeout: Duration) -> Result<Vec<u8>> {
         self.0
             .write_all(req)
-            .map_err(|e| anyhow!("порт экрана: {e}"))?;
+            .map_err(|e| anyhow!(crate::tr!("screen port: {e}", e)))?;
         let mut out = Vec::new();
         let mut buf = [0u8; 256];
         let deadline = Instant::now() + timeout;
@@ -714,14 +746,14 @@ impl Port {
                 Ok(0) => break,
                 Ok(n) => out.extend_from_slice(&buf[..n]),
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(e) => bail!("порт экрана: {e}"),
+                Err(e) => bail!(crate::tr!("screen port: {e}", e)),
             }
         }
         if out.is_empty() {
-            bail!(
-                "экран не ответил за {} с, загрузка остановлена",
-                timeout.as_secs()
-            );
+            bail!(crate::tr!(
+                "the screen didn't answer within {seconds} s, upload stopped",
+                seconds = timeout.as_secs()
+            ));
         }
         Ok(out)
     }

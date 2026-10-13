@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::lang::t;
 use crate::lighting::LedConfig;
 use crate::profile::{Profile, SIZE};
 
@@ -68,11 +69,7 @@ fn file_name(name: &str) -> String {
         })
         .collect();
     let n = n.trim_start_matches('.').to_string();
-    if n.is_empty() {
-        "профиль".into()
-    } else {
-        n
-    }
+    if n.is_empty() { t("profile").into() } else { n }
 }
 
 /// Saves under `name` in `dir`, never over an existing file.
@@ -189,7 +186,7 @@ mod tests {
     #[test]
     fn names_cannot_leave_the_folder() {
         assert_eq!(file_name("../a/b"), "_a_b");
-        assert_eq!(file_name("  "), "профиль");
+        assert_eq!(file_name("  "), "profile");
         assert_eq!(file_name(".hidden"), "hidden");
     }
 }

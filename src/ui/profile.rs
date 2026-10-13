@@ -1,6 +1,7 @@
 //! Mapping profiles: buttons, macros, sticks, triggers, gyro.
 
 use apex5::device::InputState;
+use apex5::lang::t;
 use apex5::profile::{
     self, FORCE_MODES, ForceEffect, GripMotor, MODE_SNIPER, MODE_VIBRATION, Macro, MacroStep,
     PAD_KEYS, Profile, STICK_PRESETS, TARGET_IDENTITY, TARGET_KEYBOARD, TARGET_MACRO,
@@ -18,8 +19,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     header(
         app,
         ui,
-        &format!("Профиль {}", app.active + 1),
-        "Кнопки, стики, курки и гироскоп активного профиля",
+        &apex5::tr!("Profile {slot}", slot = app.active + 1),
+        t("Buttons, sticks, triggers and gyro of the active profile"),
     );
     if app.edit.is_none() {
         ui.add(egui::Spinner::new().color(accent()));
@@ -33,9 +34,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     {
         card(ui, |ui| {
             ui.label(
-                RichText::new(format!(
-                    "Геймпад захвачен программой {by}: пока она его держит, профиль не действует, \
-                     а обычный ввод геймпада выключен."
+                RichText::new(apex5::tr!(
+                    "The controller is taken by {by}: while it holds it, the profile does nothing \
+                     and the controller's normal input is off.",
+                    by
                 ))
                 .color(WARN),
             );
@@ -50,12 +52,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui,
             &mut app.profile_tab,
             &[
-                (ProfileTab::Buttons, "Кнопки"),
-                (ProfileTab::Macros, "Макросы"),
-                (ProfileTab::Sticks, "Стики"),
-                (ProfileTab::Triggers, "Курки"),
-                (ProfileTab::Vibration, "Вибрация"),
-                (ProfileTab::Gyro, "Гироскоп"),
+                (ProfileTab::Buttons, t("Buttons")),
+                (ProfileTab::Macros, t("Macros")),
+                (ProfileTab::Sticks, t("Sticks")),
+                (ProfileTab::Triggers, t("Triggers")),
+                (ProfileTab::Vibration, t("Vibration")),
+                (ProfileTab::Gyro, t("Gyro")),
             ],
         );
     };
@@ -63,7 +65,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             super::copies::menu(app, ui);
             title_edit(app, ui);
-            ui.label(RichText::new("Название").color(DIM));
+            ui.label(RichText::new(t("Name#profile")).color(DIM));
         });
     };
     if ui.available_width() > 860.0 {
@@ -111,20 +113,28 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
     let dirty = app.profile_dirty();
     let flash = app.flash_dirty;
     let (dot, title, sub) = if dirty {
-        (WARN, "Есть изменения", "Ещё не записаны в геймпад")
+        (
+            WARN,
+            t("Unsaved changes"),
+            t("Not yet written to the controller"),
+        )
     } else if flash {
         (
             WARN,
-            "Применено, но не сохранено",
-            "Пропадёт, когда геймпад уснёт",
+            t("Applied, not saved"),
+            t("Lost when the controller sleeps"),
         )
     } else {
-        (theme::OK, "Всё сохранено", "Геймпад совпадает с экраном")
+        (
+            theme::OK,
+            t("All saved"),
+            t("The controller matches the screen"),
+        )
     };
     widgets::save_bar(ui, "profile_actions", dot, title, sub, |ui| {
         let busy = app.busy;
-        if widgets::primary(ui, "Сохранить", (dirty || flash) && !busy)
-            .on_hover_text("Записать в геймпад и сохранить во флеш-память")
+        if widgets::primary(ui, t("Save"), (dirty || flash) && !busy)
+            .on_hover_text(t("Write to the controller and save to flash"))
             .clicked()
         {
             if dirty {
@@ -132,13 +142,13 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
             }
             app.send(Cmd::SaveProfile);
         }
-        if widgets::secondary(ui, "Применить", dirty && !busy)
-            .on_hover_text("Записать в рабочую память геймпада, не сохраняя")
+        if widgets::secondary(ui, t("Apply"), dirty && !busy)
+            .on_hover_text(t("Write to the controller's working memory without saving"))
             .clicked()
         {
             app.write_profile();
         }
-        if widgets::secondary(ui, "Отменить", dirty).clicked()
+        if widgets::secondary(ui, t("Revert"), dirty).clicked()
             && let Some(p) = app.pad_profile.clone()
         {
             app.macros = p.macros();
@@ -157,11 +167,11 @@ fn factory_title(t: &str) -> Option<&str> {
         .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// A profile title as shown: the factory ones in Russian. The pad keeps
+/// A profile title as shown: the factory ones in the app's language. The pad keeps
 /// what it has.
 pub fn shown_title(t: &str) -> String {
     match factory_title(t) {
-        Some(n) => format!("Профиль {n}"),
+        Some(n) => apex5::tr!("Profile {n}", n),
         None => t.to_string(),
     }
 }
@@ -183,7 +193,7 @@ fn title_edit(app: &mut App, ui: &mut egui::Ui) {
     let hint = if factory {
         shown_title(&app.title)
     } else {
-        "без названия".into()
+        t("untitled").into()
     };
     let r = ui
         .add(
@@ -193,7 +203,7 @@ fn title_edit(app: &mut App, ui: &mut egui::Ui) {
                 .margin(vec2(10.0, 7.0))
                 .hint_text(hint),
         )
-        .on_hover_text("Название профиля, до 10 символов");
+        .on_hover_text(t("Profile name, up to 10 characters"));
     if r.changed() {
         // emptied again: back to the factory title rather than none
         app.title = if buf.is_empty() && factory_title(&pad).is_some() {
@@ -219,45 +229,45 @@ pub fn summary(p: &Profile) -> Vec<(ProfileTab, &'static str, String, bool)> {
         STICK_PRESETS
             .iter()
             .find(|(kind, ..)| *kind == k)
-            .map_or("своя", |(_, n, ..)| *n)
+            .map_or(t("custom"), |(_, n, ..)| t(n))
     };
     let mode = |side| {
         let m = p.force(side).mode;
-        MODES
-            .iter()
+        modes()
+            .into_iter()
             .find(|(mode, ..)| *mode == m)
-            .map_or("неизвестный", |(_, n, _)| *n)
+            .map_or(t("unknown"), |(_, n, _)| n)
     };
     let (l, r) = (mode(0), mode(1));
     let g = p.grip_vibration();
     let grip = g.master && (g.left.on || g.right.on);
     let gyro = match p.gyro().kind {
-        0 => "выключен",
-        1 => "левый стик",
-        _ => "правый стик",
+        0 => t("off#gyro"),
+        1 => t("left stick"),
+        _ => t("right stick"),
     };
     vec![
         (
             ProfileTab::Buttons,
-            "Кнопки",
+            t("Buttons"),
             match remapped {
-                0 => "как обычно".into(),
-                n => format!("переназначено: {n}"),
+                0 => t("as usual").into(),
+                n => apex5::tr!("remapped: {n}", n),
             },
             remapped > 0,
         ),
         (
             ProfileTab::Macros,
-            "Макросы",
+            t("Macros"),
             match macros {
-                0 => "нет".into(),
+                0 => t("none").into(),
                 n => n.to_string(),
             },
             macros > 0,
         ),
         (
             ProfileTab::Sticks,
-            "Стики",
+            t("Sticks"),
             if stick(0) == stick(1) {
                 stick(0).to_string()
             } else {
@@ -267,7 +277,7 @@ pub fn summary(p: &Profile) -> Vec<(ProfileTab, &'static str, String, bool)> {
         ),
         (
             ProfileTab::Triggers,
-            "Курки",
+            t("Triggers"),
             if l == r {
                 l.to_string()
             } else {
@@ -277,32 +287,22 @@ pub fn summary(p: &Profile) -> Vec<(ProfileTab, &'static str, String, bool)> {
         ),
         (
             ProfileTab::Vibration,
-            "Вибрация рукояток",
-            if grip {
-                "включена"
-            } else {
-                "выключена"
-            }
-            .into(),
+            t("Grip rumble"),
+            if grip { t("on") } else { t("off#grip rumble") }.into(),
             grip,
         ),
-        (
-            ProfileTab::Gyro,
-            "Гироскоп",
-            gyro.into(),
-            p.gyro().kind != 0,
-        ),
+        (ProfileTab::Gyro, t("Gyro"), gyro.into(), p.gyro().kind != 0),
     ]
 }
 
 // ------------------------------------------------------------------ buttons
 
-fn target_label(id: u8, t: u8) -> String {
-    match t {
-        TARGET_IDENTITY => "своя функция".into(),
-        TARGET_MACRO => "макрос".into(),
-        TARGET_KEYBOARD => "клавиатура".into(),
-        x if x == id || x > 32 => "своя функция".into(),
+fn target_label(id: u8, target: u8) -> String {
+    match target {
+        TARGET_IDENTITY => t("its own").into(),
+        TARGET_MACRO => t("macro").into(),
+        TARGET_KEYBOARD => t("keyboard").into(),
+        x if x == id || x > 32 => t("its own").into(),
         x => key_name(x),
     }
 }
@@ -317,17 +317,17 @@ fn is_remapped(p: &Profile, id: u8) -> bool {
 
 fn key_title(id: u8) -> String {
     match id {
-        0 => "Крестовина вверх".into(),
-        1 => "Крестовина вправо".into(),
-        2 => "Крестовина вниз".into(),
-        3 => "Крестовина влево".into(),
-        14 => "Нажатие левого стика (L3)".into(),
-        15 => "Нажатие правого стика (R3)".into(),
-        18..=21 => format!("Задняя кнопка {}", key_name(id)),
-        22 => "Левая доп. кнопка (LM)".into(),
-        23 => "Правая доп. кнопка (RM)".into(),
-        27 => "Кнопка Home".into(),
-        _ => format!("Кнопка {}", key_name(id)),
+        0 => t("D-pad up").into(),
+        1 => t("D-pad right").into(),
+        2 => t("D-pad down").into(),
+        3 => t("D-pad left").into(),
+        14 => t("Left stick press (L3)").into(),
+        15 => t("Right stick press (R3)").into(),
+        18..=21 => apex5::tr!("Back paddle {key}", key = key_name(id)),
+        22 => t("Left extra button (LM)").into(),
+        23 => t("Right extra button (RM)").into(),
+        27 => t("Home button").into(),
+        _ => apex5::tr!("Button {key}", key = key_name(id)),
     }
 }
 
@@ -361,7 +361,7 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
                 let k = p.key(id);
                 let mut tip = format!("{} → {}", key_title(id), target_label(id, k.target));
                 if k.turbo() {
-                    tip += &format!(", турбо {} нажатий/с", k.turbo_freq);
+                    tip += &apex5::tr!(", turbo {rate} presses/s", rate = k.turbo_freq);
                 }
                 egui::Tooltip::always_open(
                     ui.ctx().clone(),
@@ -376,7 +376,7 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
                 ui.painter().circle_filled(rect.center(), 4.0, accent());
                 hint(
                     ui,
-                    "— переназначена или с турбо. Нажмите на кнопку, чтобы настроить.",
+                    t("— remapped or with turbo. Click a button to set it up."),
                 );
             });
         });
@@ -398,9 +398,9 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
 /// Every key that does something else than its own job, at a glance; a
 /// click opens it in the editor.
 fn assignments(p: &Profile, selected: &mut u8, marked: &[u8], ui: &mut egui::Ui) {
-    card_titled(ui, "Назначения", |ui| {
+    card_titled(ui, t("Assignments"), |ui| {
         if marked.is_empty() {
-            hint(ui, "Все кнопки работают как обычно.");
+            hint(ui, t("All buttons work as usual."));
             return;
         }
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -408,11 +408,11 @@ fn assignments(p: &Profile, selected: &mut u8, marked: &[u8], ui: &mut egui::Ui)
             let k = p.key(id);
             let mut value = target_label(id, k.target);
             if k.turbo() {
-                value += &format!(" · турбо {}/с", k.turbo_freq);
+                value += &apex5::tr!(" · turbo {rate}/s", rate = k.turbo_freq);
             }
             let colour = if id == *selected { accent() } else { TEXT };
             if widgets::link_row(ui, &key_title(id), &value, colour)
-                .on_hover_text("Настроить эту кнопку")
+                .on_hover_text(t("Set up this button"))
                 .clicked()
             {
                 *selected = id;
@@ -421,9 +421,9 @@ fn assignments(p: &Profile, selected: &mut u8, marked: &[u8], ui: &mut egui::Ui)
         ui.add_space(6.0);
         hint(
             ui,
-            &format!(
-                "Остальные кнопки ({}) работают как обычно.",
-                PAD_KEYS.len() - marked.len()
+            &apex5::tr!(
+                "The other buttons ({count}) work as usual.",
+                count = PAD_KEYS.len() - marked.len()
             ),
         );
     });
@@ -440,16 +440,16 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
         );
         ui.add_space(6.0);
 
-        widgets::caption(ui, "Работает как");
+        widgets::caption(ui, t("Works as"));
         if k.target == TARGET_MACRO {
-            ui.label(RichText::new("Назначен макрос").color(accent()));
-            hint(ui, "Изменить или удалить его можно на вкладке «Макросы».");
+            ui.label(RichText::new(t("A macro is assigned")).color(accent()));
+            hint(ui, t("You can change or delete it on the \"Macros\" tab."));
         } else {
             let own = k.target == TARGET_IDENTITY || k.target == id || k.target > 32;
             let gap = 6.0;
             let cols = 4;
             let w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).floor();
-            let mut options: Vec<(u8, String)> = vec![(TARGET_IDENTITY, "своя".into())];
+            let mut options: Vec<(u8, String)> = vec![(TARGET_IDENTITY, t("own").into())];
             options.extend(
                 XINPUT_TARGETS
                     .iter()
@@ -473,20 +473,22 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
             }
             if k.target == TARGET_KEYBOARD {
                 ui.label(
-                    RichText::new("Назначена клавиша клавиатуры — в Linux это не работает.")
-                        .color(WARN),
+                    RichText::new(t(
+                        "A keyboard key is assigned — this doesn't work on Linux.",
+                    ))
+                    .color(WARN),
                 );
             }
             if macros.iter().all(|m| m.key != id) {
                 hint(
                     ui,
-                    "Макрос на эту кнопку можно добавить на вкладке «Макросы».",
+                    t("A macro for this button can be added on the \"Macros\" tab."),
                 );
             }
         }
 
         ui.add_space(12.0);
-        widgets::caption(ui, "Турбо");
+        widgets::caption(ui, t("Turbo"));
         let mut mode = if k.turbo() {
             k.turbo_mode.clamp(1, 2)
         } else {
@@ -497,7 +499,11 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
                 segmented(
                     ui,
                     &mut mode,
-                    &[(0, "Выкл"), (1, "При удержании"), (2, "Переключатель")],
+                    &[
+                        (0, t("Off#turbo")),
+                        (1, t("While held#turbo")),
+                        (2, t("Toggle")),
+                    ],
                 )
             })
             .inner;
@@ -515,17 +521,17 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
         }
         if mode != 0 {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Частота").color(DIM));
+                ui.label(RichText::new(t("Frequency")).color(DIM));
                 ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(80.0);
-                ui.add(widgets::slider(&mut k.turbo_freq, 1..=40).suffix(" /с"))
-                    .on_hover_text("Нажатий в секунду");
+                ui.add(widgets::slider(&mut k.turbo_freq, 1..=40).suffix(t(" /s")))
+                    .on_hover_text(t("Presses per second"));
             });
             hint(
                 ui,
                 if mode == 1 {
-                    "Пока кнопка зажата, геймпад повторяет нажатие."
+                    t("While the button is held, the controller repeats the press.")
                 } else {
-                    "Одно нажатие включает автоповтор, второе — выключает."
+                    t("One press starts auto-repeat, the next one stops it.")
                 },
             );
         }
@@ -567,47 +573,43 @@ fn chip(ui: &mut egui::Ui, size: egui::Vec2, selected: bool, text: &str) -> egui
 fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
     let total: usize = macros.iter().map(|m| m.steps.len()).sum();
     card(ui, |ui| {
-        let what = format!(
-            "До {} макросов и {} шагов на профиль (занято {total}). Время — с шагом 10 мс.",
-            profile::MACRO_MAX,
-            profile::MACRO_STEPS_MAX
+        let what = apex5::tr!(
+            "Up to {macros} macros and {steps} steps per profile ({total} used). Times go in 10 ms steps.",
+            macros = profile::MACRO_MAX,
+            steps = profile::MACRO_STEPS_MAX,
+            total
         );
-        widgets::row(
-            ui,
-            "Макросы выполняет сам геймпад",
-            &what,
-            |ui| {
-                if macros.len() >= profile::MACRO_MAX {
-                    return;
-                }
-                let used: Vec<u8> = macros.iter().map(|m| m.key).collect();
-                egui::ComboBox::from_id_salt("newmacro")
-                    .selected_text("+ Новый макрос")
-                    .width(170.0)
-                    .show_ui(ui, |ui| {
-                        for (id, name) in PAD_KEYS {
-                            if !used.contains(&id)
-                                && ui
-                                    .selectable_label(false, format!("на кнопку {name}"))
-                                    .clicked()
-                            {
-                                macros.push(Macro {
-                                    key: id,
-                                    kind: 1,
-                                    interval_ms: None,
-                                    steps: vec![],
-                                });
-                            }
+        widgets::row(ui, t("The controller runs macros itself"), &what, |ui| {
+            if macros.len() >= profile::MACRO_MAX {
+                return;
+            }
+            let used: Vec<u8> = macros.iter().map(|m| m.key).collect();
+            egui::ComboBox::from_id_salt("newmacro")
+                .selected_text(t("+ New macro"))
+                .width(170.0)
+                .show_ui(ui, |ui| {
+                    for (id, name) in PAD_KEYS {
+                        if !used.contains(&id)
+                            && ui
+                                .selectable_label(false, apex5::tr!("on button {name}", name))
+                                .clicked()
+                        {
+                            macros.push(Macro {
+                                key: id,
+                                kind: 1,
+                                interval_ms: None,
+                                steps: vec![],
+                            });
                         }
-                    });
-            },
-        );
+                    }
+                });
+        });
     });
 
     let kinds = [
-        (1u8, "Один раз"),
-        (2, "Пока удерживается"),
-        (3, "Вкл/выкл нажатием"),
+        (1u8, t("Once")),
+        (2, t("While held")),
+        (3, t("On/off by press")),
     ];
     let mut remove = None;
     for (mi, m) in macros.iter_mut().enumerate() {
@@ -630,12 +632,12 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.label(
-                        RichText::new(format!("Макрос на кнопке {}", key_name(m.key)))
+                        RichText::new(apex5::tr!("Macro on button {key}", key = key_name(m.key)))
                             .font(theme::medium(15.0))
                             .color(TEXT),
                     );
                     ui.label(
-                        RichText::new(format!("шагов: {}", m.steps.len()))
+                        RichText::new(apex5::tr!("steps: {count}", count = m.steps.len()))
                             .size(12.0)
                             .color(DIM),
                     );
@@ -643,7 +645,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(
-                            egui::Button::new(RichText::new("Удалить").color(theme::BAD))
+                            egui::Button::new(RichText::new(t("Delete")).color(theme::BAD))
                                 .frame(false),
                         )
                         .clicked()
@@ -657,13 +659,13 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 segmented(ui, &mut m.kind, &kinds);
                 if m.kind != 1 {
                     let mut iv = m.interval_ms.unwrap_or(30);
-                    ui.label(RichText::new("пауза между повторами").color(DIM));
+                    ui.label(RichText::new(t("pause between repeats")).color(DIM));
                     if ui
                         .add(
                             egui::DragValue::new(&mut iv)
                                 .range(0..=2540)
                                 .speed(10)
-                                .suffix(" мс"),
+                                .suffix(t(" ms")),
                         )
                         .changed()
                     {
@@ -690,10 +692,14 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                                 egui::DragValue::new(&mut st.delay_ms)
                                     .range(0..=8000)
                                     .speed(10)
-                                    .prefix("через ")
-                                    .suffix(" мс"),
+                                    .prefix(t("after "))
+                                    .suffix(t(" ms")),
                             );
-                            segmented(ui, &mut st.press, &[(true, "нажать"), (false, "отпустить")]);
+                            segmented(
+                                ui,
+                                &mut st.press,
+                                &[(true, t("press")), (false, t("release"))],
+                            );
                             egui::ComboBox::from_id_salt(("sk", mi, si))
                                 .width(90.0)
                                 .selected_text(key_name(st.key))
@@ -710,7 +716,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                                             egui::Button::new(RichText::new("✕").color(DIM))
                                                 .frame(false),
                                         )
-                                        .on_hover_text("Удалить шаг")
+                                        .on_hover_text(t("Delete step"))
                                         .clicked()
                                     {
                                         del = Some(si);
@@ -729,7 +735,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 let d = if m.steps.is_empty() { 0 } else { 50 };
                 if widgets::secondary(
                     ui,
-                    "+ Нажатие кнопки",
+                    t("+ Button press"),
                     total + 2 <= profile::MACRO_STEPS_MAX,
                 )
                 .clicked()
@@ -745,7 +751,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                         press: false,
                     });
                 }
-                if widgets::secondary(ui, "+ Шаг", total < profile::MACRO_STEPS_MAX).clicked() {
+                if widgets::secondary(ui, t("+ Step"), total < profile::MACRO_STEPS_MAX).clicked() {
                     m.steps.push(MacroStep {
                         delay_ms: d,
                         key,
@@ -754,7 +760,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 }
                 let presses = m.steps.iter().filter(|s| s.press).count();
                 if presses * 2 != m.steps.len() {
-                    ui.label(RichText::new("нажатия и отпускания не совпадают").color(WARN));
+                    ui.label(RichText::new(t("presses and releases don't match")).color(WARN));
                 }
             });
         });
@@ -788,11 +794,13 @@ fn sticks(p: &mut Profile, input: Option<InputState>, ui: &mut egui::Ui) {
         .request_repaint_after(std::time::Duration::from_millis(16));
     ui.add_space(8.0);
     ui.label(
-        RichText::new("Точки на графике можно перетаскивать.")
+        RichText::new(t("You can drag the points on the graph."))
             .size(12.5)
             .color(DIM),
     )
-    .on_hover_text("Геймпад играет 9-точечную кривую; она пересчитывается из этих настроек.");
+    .on_hover_text(t(
+        "The controller plays a 9-point curve; it is recomputed from these settings.",
+    ));
 }
 
 fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut egui::Ui) {
@@ -801,15 +809,17 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
     card_titled(
         ui,
         if side == 0 {
-            "Левый стик"
+            t("Left stick")
         } else {
-            "Правый стик"
+            t("Right stick")
         },
         |ui| {
             let mut kind = s.kind;
-            let mut items: Vec<(u8, &str)> =
-                STICK_PRESETS.iter().map(|(k, n, _, _)| (*k, *n)).collect();
-            items.push((3, "Своя"));
+            let mut items: Vec<(u8, &str)> = STICK_PRESETS
+                .iter()
+                .map(|(k, n, _, _)| (*k, t(n)))
+                .collect();
+            items.push((3, t("Custom")));
             if segmented(ui, &mut kind, &items) {
                 if let Some((_, _, p1, p2)) = STICK_PRESETS.iter().find(|(k, ..)| *k == kind) {
                     s.p1 = *p1;
@@ -837,28 +847,32 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
                 .num_columns(2)
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Центр").color(DIM)).on_hover_text(
-                        "Вправо — мёртвая зона: у центра стик молчит.\n\
-                         Влево — смещение: выход сразу начинается с этого значения, \
-                         чтобы перекрыть встроенную мёртвую зону игры.",
-                    );
+                    ui.label(RichText::new(t("Center")).color(DIM))
+                        .on_hover_text(t(
+                            "Right — dead zone: the stick is silent near the center.\n\
+                         Left — offset: the output starts right at this value, \
+                         to cover the game's built-in dead zone.",
+                        ));
                     custom |= zone_slider(ui, &mut s.center, |v| match v {
-                        v if v < 0 => format!("смещение {} %", -v),
-                        v => format!("мёртвая зона {v} %"),
+                        v if v < 0 => apex5::tr!("offset {percent} %", percent = -v),
+                        v => apex5::tr!("dead zone {v} %", v),
                     });
                     ui.end_row();
-                    ui.label(RichText::new("Край").color(DIM)).on_hover_text(
-                        "Вправо — внешняя зона: полный выход раньше упора.\n\
-                         Влево — потолок: даже в упоре выход не доходит до 100 %, \
-                         для точного прицеливания.",
-                    );
+                    ui.label(RichText::new(t("Edge")).color(DIM))
+                        .on_hover_text(t("Right — outer zone: full output before the stop.\n\
+                         Left — ceiling: even at the stop the output stays below 100 %, \
+                         for precise aiming."));
                     custom |= zone_slider(ui, &mut s.edge, |v| match v {
-                        v if v < 0 => format!("потолок {} %", 100 + v),
-                        v => format!("внешняя зона {v} %"),
+                        v if v < 0 => apex5::tr!("ceiling {percent} %", percent = 100 + v),
+                        v => apex5::tr!("outer zone {v} %", v),
                     });
                     ui.end_row();
-                    ui.label(RichText::new("Форма хода").color(DIM));
-                    segmented(ui, &mut s.round, &[(true, "Круг"), (false, "Квадрат")]);
+                    ui.label(RichText::new(t("Gate shape")).color(DIM));
+                    segmented(
+                        ui,
+                        &mut s.round,
+                        &[(true, t("Circle")), (false, t("Square"))],
+                    );
                     ui.end_row();
                 });
             if custom {
@@ -868,7 +882,9 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
                 ui.add_space(4.0);
                 hint(
                     ui,
-                    "При смещении центра автокалибровка стика не работает (так написано у Flydigi).",
+                    t(
+                        "With a center offset, stick auto-calibration doesn't work (so Flydigi says).",
+                    ),
                 );
             }
         },
@@ -961,7 +977,7 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
                 p.text(
                     c,
                     egui::Align2::CENTER_CENTER,
-                    "подвигайте\nстиком",
+                    t("move the\nstick"),
                     egui::FontId::proportional(12.0),
                     FAINT,
                 );
@@ -972,10 +988,10 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
             let (rr, _) = ui.allocate_exact_size(vec2(10.0, 14.0), egui::Sense::hover());
             ui.painter()
                 .circle_stroke(rr.center(), 4.0, Stroke::new(1.5, DIM));
-            ui.label(RichText::new("стик").size(11.5).color(DIM));
+            ui.label(RichText::new(t("stick")).size(11.5).color(DIM));
             let (rr, _) = ui.allocate_exact_size(vec2(10.0, 14.0), egui::Sense::hover());
             ui.painter().circle_filled(rr.center(), 4.0, accent());
-            ui.label(RichText::new("в игре").size(11.5).color(DIM));
+            ui.label(RichText::new(t("in game")).size(11.5).color(DIM));
         });
     });
 }
@@ -1018,14 +1034,14 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
     pt.text(
         map(1.0, 99.0),
         egui::Align2::LEFT_TOP,
-        "выход",
+        t("output"),
         egui::FontId::proportional(11.0),
         FAINT,
     );
     pt.text(
         map(99.0, 1.0),
         egui::Align2::RIGHT_BOTTOM,
-        "отклонение стика",
+        t("stick deflection"),
         egui::FontId::proportional(11.0),
         FAINT,
     );
@@ -1115,14 +1131,20 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
 // ------------------------------------------------------------------ triggers
 
 // Space Station's own labels for 2 and 3 are swapped against the modes.
-const MODES: [(u8, &str, &str); 6] = [
-    (0, "Обычный", "Курок свободный"),
-    (1, "Гоночный", "Постоянное сопротивление"),
-    (3, "Прорыв", "Упор, который продавливается"),
-    (4, "Блокировка", "Жёсткий упор, короткий ход"),
-    (MODE_SNIPER, "Очередь", "Дрожит после точки хода"),
-    (MODE_VIBRATION, "Вибрация игры", "Вибрация рукояток в курке"),
-];
+fn modes() -> [(u8, &'static str, &'static str); 6] {
+    [
+        (0, t("Normal"), t("Trigger is free")),
+        (1, t("Racing"), t("Constant resistance")),
+        (3, t("Breakpoint"), t("A stop that gives way")),
+        (4, t("Lock"), t("Hard stop, short travel")),
+        (MODE_SNIPER, t("Burst"), t("Shakes past a point of travel")),
+        (
+            MODE_VIBRATION,
+            t("Game vibration"),
+            t("Grip rumble in the trigger"),
+        ),
+    ]
+}
 
 fn triggers(p: &mut Profile, ui: &mut egui::Ui) {
     let wide = ui.available_width() > 860.0;
@@ -1141,25 +1163,25 @@ fn triggers(p: &mut Profile, ui: &mut egui::Ui) {
     }
     ui.add_space(8.0);
     ui.label(
-        RichText::new("Режимы курков начинают работать после «Применить».")
+        RichText::new(t("Trigger modes take effect after \"Apply\"."))
             .size(12.5)
             .color(DIM),
     )
-    .on_hover_text(
-        "«Вибрация игры» держится, пока геймпад подключён: если сменить профиль кнопкой \
-         на геймпаде, она останется до переподключения или до смены профиля в приложении.",
-    );
+    .on_hover_text(t(
+        "\"Game vibration\" stays while the controller is connected: if you switch profiles with \
+         the controller's button, it stays until reconnecting or switching profiles in the app.",
+    ));
 }
 
 /// Grip rumble from games: on or off, and each motor's window and strength.
 fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
     let g = p.grip_vibration();
     let mut on = g.master && (g.left.on || g.right.on);
-    card_titled(ui, "Вибрация рукояток", |ui| {
+    card_titled(ui, t("Grip rumble"), |ui| {
         if widgets::toggle_row(
             ui,
-            "Вибрация от игр",
-            "Моторы в рукоятках, которыми управляет игра",
+            t("Rumble from games"),
+            t("The grip motors, driven by the game"),
             &mut on,
         ) {
             p.set_grip_vibration(on);
@@ -1173,8 +1195,8 @@ fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| {
                     ui.label("");
-                    ui.label(RichText::new("Левый мотор").color(DIM));
-                    ui.label(RichText::new("Правый мотор").color(DIM));
+                    ui.label(RichText::new(t("Left motor")).color(DIM));
+                    ui.label(RichText::new(t("Right motor")).color(DIM));
                     ui.end_row();
                     let row = |ui: &mut egui::Ui,
                                name: &str,
@@ -1190,24 +1212,24 @@ fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
                     };
                     row(
                         ui,
-                        "Сила",
-                        "Какая доля вибрации игры доходит до мотора. В Space Station это «сила вибрации рукояток», с завода 50%.",
+                        t("Strength"),
+                        t("How much of the game's vibration reaches the motor. In Space Station this is the \"grip vibration strength\", 50% from the factory."),
                         &mut motors,
                         |m| &mut m.scale,
                         |v| widgets::slider(v, 1..=100).suffix("%"),
                     );
                     row(
                         ui,
-                        "Минимум",
-                        "Слабее этого мотор не работает, если игра вообще вибрирует.",
+                        t("Minimum#motor"),
+                        t("If the game rumbles at all, the motor runs no weaker than this."),
                         &mut motors,
                         |m| &mut m.min,
                         level_slider,
                     );
                     row(
                         ui,
-                        "Максимум",
-                        "Сильнее этого мотор не работает.",
+                        t("Maximum#motor"),
+                        t("The motor never runs stronger than this."),
                         &mut motors,
                         |m| &mut m.max,
                         level_slider,
@@ -1222,7 +1244,7 @@ fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         hint(
             ui,
-            "В геймпад попадает после «Применить». Проверить моторы можно в разделе «Тест ввода».",
+            t("Reaches the controller after \"Apply\". You can test the motors in \"Input test\"."),
         );
     });
 }
@@ -1244,40 +1266,41 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
     card_titled(
         ui,
         if side == 0 {
-            "Левый курок · LT"
+            t("Left trigger · LT")
         } else {
-            "Правый курок · RT"
+            t("Right trigger · RT")
         },
         |ui| {
             ui.label(
-                RichText::new("Рабочий ход")
+                RichText::new(t("Travel"))
                     .font(theme::medium(14.5))
                     .color(TEXT),
             )
-            .on_hover_text(
-                "Сдвиньте конец влево, чтобы курок срабатывал полностью при коротком нажатии.",
-            );
+            .on_hover_text(t(
+                "Move the end left so a short press fires the trigger fully.",
+            ));
             let (mut z, mut e) = p.travel(side);
             if travel_bar(ui, &mut z, &mut e, side) {
                 p.set_travel(side, z, e);
             }
             ui.add_space(12.0);
 
-            ui.label(RichText::new("Режим").font(theme::medium(14.5)).color(TEXT));
+            ui.label(
+                RichText::new(t("Mode"))
+                    .font(theme::medium(14.5))
+                    .color(TEXT),
+            );
             let mut f = p.force(side);
             if f.mode >= FORCE_MODES {
                 ui.label(
-                    RichText::new(format!(
-                        "В профиле записан неизвестный режим ({}). Его можно заменить на один из режимов ниже.",
-                        f.mode
-                    ))
+                    RichText::new(apex5::tr!("The profile holds an unknown mode ({mode}). You can replace it with one of the modes below.", mode = f.mode))
                     .color(WARN),
                 );
             }
             let before = f;
             let gap = 6.0;
             let w = ((ui.available_width() - gap) / 2.0).floor();
-            for pair in MODES.chunks(2) {
+            for pair in modes().chunks(2) {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for (m, name, desc) in pair {
@@ -1303,10 +1326,10 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| match mode {
                     1 => {
-                        ui.label(RichText::new("Начало").color(DIM));
+                        ui.label(RichText::new(t("Start")).color(DIM));
                         ui.add(widgets::slider(&mut pr[0], 0..=192));
                         ui.end_row();
-                        ui.label(RichText::new("Сила").color(DIM));
+                        ui.label(RichText::new(t("Strength")).color(DIM));
                         ui.add(widgets::slider(&mut pr[1], 1..=255));
                         ui.end_row();
                     }
@@ -1314,29 +1337,29 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         let [start, press, strength, freq, ..] = pr;
                         row(
                             ui,
-                            "Начало",
-                            "С какого места хода курок начинает дрожать.",
+                            t("Start"),
+                            t("Where in the travel the trigger starts to shake."),
                             widgets::slider(start, 0..=192),
                         );
                         row(
                             ui,
-                            "Сила нажатия",
-                            "Насколько сильно нужно нажать в этой точке, чтобы дрожь началась.",
+                            t("Press force"),
+                            t("How hard to press at this point for the shaking to start."),
                             widgets::slider(press, 1..=255),
                         );
                         row(
                             ui,
-                            "Сила",
-                            "Сила дрожи.",
+                            t("Strength"),
+                            t("Shake strength."),
                             widgets::slider(strength, 1..=255),
                         );
                         row(
                             ui,
-                            "Частота",
-                            "Частота дрожи.",
+                            t("Frequency"),
+                            t("Shake frequency."),
                             widgets::slider(freq, 1..=255),
                         );
-                        ui.label(RichText::new("Учитывать нажатие").color(DIM));
+                        ui.label(RichText::new(t("Respond to pressure")).color(DIM));
                         let mut m = pr[4] == 1;
                         if widgets::toggle(ui, &mut m).changed() {
                             pr[4] = m as u8;
@@ -1344,16 +1367,16 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         ui.end_row();
                     }
                     3 => {
-                        ui.label(RichText::new("Начало").color(DIM));
+                        ui.label(RichText::new(t("Start")).color(DIM));
                         ui.add(widgets::slider(&mut pr[0], 0..=192));
                         ui.end_row();
-                        ui.label(RichText::new("Длина упора").color(DIM));
+                        ui.label(RichText::new(t("Stop length")).color(DIM));
                         ui.add(widgets::slider(&mut pr[1], 1..=255));
                         ui.end_row();
-                        ui.label(RichText::new("Сила").color(DIM));
+                        ui.label(RichText::new(t("Strength")).color(DIM));
                         ui.add(widgets::slider(&mut pr[2], 1..=255));
                         ui.end_row();
-                        ui.label(RichText::new("Учитывать нажатие").color(DIM));
+                        ui.label(RichText::new(t("Respond to pressure")).color(DIM));
                         let mut m = pr[4] == 1;
                         if widgets::toggle(ui, &mut m).changed() {
                             pr[4] = m as u8;
@@ -1361,7 +1384,7 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         ui.end_row();
                     }
                     4 => {
-                        ui.label(RichText::new("Точка упора").color(DIM));
+                        ui.label(RichText::new(t("Stop point")).color(DIM));
                         ui.add(widgets::slider(&mut pr[0], 20..=200));
                         ui.end_row();
                     }
@@ -1369,26 +1392,26 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         let [stroke, freq, ..] = pr;
                         row(
                             ui,
-                            "Ход",
-                            "На каком отрезке хода курок вибрирует.",
+                            t("Travel#vibration"),
+                            t("Which part of the travel vibrates."),
                             widgets::slider(stroke, 1..=200),
                         );
                         row(
                             ui,
-                            "Частота",
-                            "Частота вибрации курка.",
+                            t("Frequency"),
+                            t("Trigger vibration frequency."),
                             widgets::slider(freq, 1..=255),
                         );
                         row(
                             ui,
-                            "Порог",
-                            "Вибрация рукояток слабее порога в курок не попадает.",
+                            t("Threshold"),
+                            t("Grip rumble below the threshold doesn't reach the trigger."),
                             widgets::slider(&mut bind.block, 1..=255),
                         );
                         row(
                             ui,
-                            "Сила",
-                            "Коэффициент силы вибрации курка.",
+                            t("Strength"),
+                            t("Trigger vibration strength factor."),
                             widgets::slider(&mut bind.scale, 0..=200),
                         );
                     }
@@ -1449,14 +1472,14 @@ fn travel_bar(ui: &mut egui::Ui, start: &mut u8, end: &mut u8, side: usize) -> b
     ui.painter().text(
         pos2(rail.left(), rect.bottom() - 6.0),
         egui::Align2::LEFT_BOTTOM,
-        format!("начало {}%", pct(*start)),
+        apex5::tr!("start {percent}%", percent = pct(*start)),
         egui::FontId::proportional(12.0),
         DIM,
     );
     ui.painter().text(
         pos2(rail.right(), rect.bottom() - 6.0),
         egui::Align2::RIGHT_BOTTOM,
-        format!("конец {}%", pct(*end)),
+        apex5::tr!("end {percent}%", percent = pct(*end)),
         egui::FontId::proportional(12.0),
         DIM,
     );
@@ -1500,22 +1523,22 @@ fn gyro(p: &mut Profile, ui: &mut egui::Ui) {
     let before = g;
     card(ui, |ui| {
         ui.label(
-            RichText::new("Гироскоп как стик")
+            RichText::new(t("Gyro as a stick"))
                 .font(theme::bold(18.0))
                 .color(TEXT),
         );
         hint(
             ui,
-            "Наклон геймпада двигает выбранный стик — удобно для точного прицеливания.",
+            t("Tilting the controller moves the chosen stick — handy for precise aiming."),
         );
         ui.add_space(8.0);
         segmented(
             ui,
             &mut g.kind,
             &[
-                (0, "Выключен"),
-                (2, "Правый стик (прицел)"),
-                (1, "Левый стик (руль)"),
+                (0, t("Off#gyro")),
+                (2, t("Right stick (aim)")),
+                (1, t("Left stick (steering)")),
             ],
         );
         ui.add_space(10.0);
@@ -1525,35 +1548,35 @@ fn gyro(p: &mut Profile, ui: &mut egui::Ui) {
                 .num_columns(2)
                 .spacing([20.0, 10.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Кнопка включения").color(DIM));
+                    ui.label(RichText::new(t("Enable button")).color(DIM));
                     key_combo(ui, "gk", &mut g.key);
                     ui.end_row();
-                    ui.label(RichText::new("Как включать").color(DIM));
+                    ui.label(RichText::new(t("How to enable")).color(DIM));
                     segmented(
                         ui,
                         &mut g.hold,
-                        &[(true, "Пока удерживается"), (false, "Нажатие переключает")],
+                        &[(true, t("While held")), (false, t("Press toggles"))],
                     );
                     ui.end_row();
                     if g.hold {
-                        ui.label(RichText::new("Вторая кнопка").color(DIM));
+                        ui.label(RichText::new(t("Second button")).color(DIM));
                         key_combo(ui, "gk2", &mut g.key2);
                         ui.end_row();
                     }
-                    ui.label(RichText::new("Мёртвая зона").color(DIM));
+                    ui.label(RichText::new(t("Dead zone")).color(DIM));
                     ui.add(widgets::slider(&mut g.deadzone, 0..=100));
                     ui.end_row();
-                    ui.label(RichText::new("Чувствительность по X").color(DIM));
+                    ui.label(RichText::new(t("X sensitivity")).color(DIM));
                     ui.add(widgets::slider(&mut g.sens_x, 0..=100));
                     ui.end_row();
-                    ui.label(RichText::new("Чувствительность по Y").color(DIM));
+                    ui.label(RichText::new(t("Y sensitivity")).color(DIM));
                     ui.add(widgets::slider(&mut g.sens_y, 0..=100));
                     ui.end_row();
                 });
         });
         if g.hold && g.key2 == 0 && g.kind != 0 {
             ui.add_space(4.0);
-            ui.label(RichText::new("Вторая кнопка сейчас «крестовина вверх» (заводское значение) — она тоже включает гироскоп.").color(WARN));
+            ui.label(RichText::new(t("The second button is now \"D-pad up\" (the factory value) — it also turns the gyro on.")).color(WARN));
         }
     });
     if g != before {
@@ -1563,14 +1586,14 @@ fn gyro(p: &mut Profile, ui: &mut egui::Ui) {
 
 fn key_combo(ui: &mut egui::Ui, id: &str, key: &mut u8) {
     let text = if *key == 255 {
-        "нет".to_string()
+        t("none").to_string()
     } else {
         key_name(*key)
     };
     egui::ComboBox::from_id_salt(id)
         .selected_text(text)
         .show_ui(ui, |ui| {
-            ui.selectable_value(key, 255, "нет");
+            ui.selectable_value(key, 255, t("none"));
             for (k, n) in PAD_KEYS {
                 ui.selectable_value(key, k, n);
             }

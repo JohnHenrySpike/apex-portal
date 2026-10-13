@@ -10,6 +10,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use apex5::lang::t;
 use eframe::egui;
 use ksni::blocking::TrayMethods;
 
@@ -113,7 +114,7 @@ impl ksni::Tray for Icon {
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
             title: "Apex 5 Control".into(),
-            description: "Режим DualSense включён: игры видят DualSense".into(),
+            description: t("DualSense mode is on: games see a DualSense").into(),
             ..Default::default()
         }
     }
@@ -126,7 +127,7 @@ impl ksni::Tray for Icon {
         use ksni::menu::{CheckmarkItem, StandardItem};
         vec![
             StandardItem {
-                label: "Открыть окно".into(),
+                label: t("Open window").into(),
                 icon_name: "window-new".into(),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.wake.send(Wake::Open);
@@ -135,7 +136,7 @@ impl ksni::Tray for Icon {
             }
             .into(),
             CheckmarkItem {
-                label: "Режим DualSense".into(),
+                label: t("DualSense mode").into(),
                 checked: true,
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.wake.send(Wake::DualSenseOff);
@@ -145,7 +146,7 @@ impl ksni::Tray for Icon {
             .into(),
             ksni::MenuItem::Separator,
             StandardItem {
-                label: "Выйти".into(),
+                label: t("Quit").into(),
                 icon_name: "application-exit".into(),
                 activate: Box::new(|t: &mut Self| {
                     let _ = t.wake.send(Wake::Quit);

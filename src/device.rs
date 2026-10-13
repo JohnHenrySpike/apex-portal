@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow, bail};
 use std::time::Duration;
 
 use crate::hid::{Device, Reply, build};
+use crate::lang::t;
 use crate::profile::TriggerBind;
 
 const T: Duration = Duration::from_millis(600);
@@ -118,7 +119,7 @@ pub fn write_nickname(dev: &mut Device, name: &str) -> Result<()> {
 pub fn enter_screen_upload(dev: &mut Device) -> Result<()> {
     let r = need(dev.query(1, &[], T)?, "get-info")?;
     if r.at(7) != 1 {
-        bail!("картинку можно загрузить только по кабелю");
+        bail!(t("a picture can be uploaded by cable only"));
     }
     dev.switch_screen()
 }
@@ -178,33 +179,39 @@ pub fn set_number(dev: &mut Device, cmd: u8, value: u8) -> Result<()> {
 
 /// Space Station offers 8..12 bits only; 14 and 16 are in the firmware's
 /// enum but untried.
-pub const PRECISION: [(u8, &str); 7] = [
-    (1, "8 бит"),
-    (4, "9 бит"),
-    (2, "10 бит"),
-    (5, "11 бит"),
-    (3, "12 бит"),
-    (6, "14 бит (не проверено)"),
-    (7, "16 бит (не проверено)"),
-];
+pub fn precision() -> Vec<(u8, &'static str)> {
+    vec![
+        (1, t("8 bit")),
+        (4, t("9 bit")),
+        (2, t("10 bit")),
+        (5, t("11 bit")),
+        (3, t("12 bit")),
+        (6, t("14 bit (untested)")),
+        (7, t("16 bit (untested)")),
+    ]
+}
 /// Space Station's choices; `safety` refuses anything else above an hour.
-pub const SLEEP: [(u8, &str); 6] = [
-    (1, "1 мин"),
-    (5, "5 мин"),
-    (15, "15 мин"),
-    (60, "1 час"),
-    (180, "3 часа"),
-    (0, "Никогда"),
-];
-pub const SENSITIVITY: [(u8, &str); 7] = [
-    (14, "Максимальная"),
-    (15, "Высокая"),
-    (16, "Выше средней"),
-    (17, "Средняя"),
-    (18, "Ниже средней"),
-    (19, "Низкая"),
-    (20, "Минимальная"),
-];
+pub fn sleep() -> Vec<(u8, &'static str)> {
+    vec![
+        (1, t("1 min")),
+        (5, t("5 min")),
+        (15, t("15 min")),
+        (60, t("1 hour")),
+        (180, t("3 hours")),
+        (0, t("Never")),
+    ]
+}
+pub fn sensitivity() -> Vec<(u8, &'static str)> {
+    vec![
+        (14, t("Maximum")),
+        (15, t("High")),
+        (16, t("Above average")),
+        (17, t("Average")),
+        (18, t("Below average")),
+        (19, t("Low")),
+        (20, t("Minimum")),
+    ]
+}
 
 // ------------------------------------------------------------ input stream
 

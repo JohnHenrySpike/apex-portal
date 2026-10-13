@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use apex5::device::{Flags, Info, Settings};
 use apex5::evdev::Output;
+use apex5::lang::t;
 use apex5::lighting::{Effect, LedConfig, Rgb};
 use apex5::profile::{Macro, Profile};
 use apex5::tester::Gate;
@@ -65,7 +66,7 @@ pub struct App {
     /// Lighting written to the pad's working memory but not committed.
     pub led_flash_dirty: bool,
     /// The lighting as it was before this app changed it, or as last saved:
-    /// what "Отменить" brings back.
+    /// what "Revert" brings back.
     pub led_saved: Option<LedEdit>,
     /// Profile as it is on the pad (RAM) and as being edited.
     pub pad_profile: Option<Profile>,
@@ -111,7 +112,7 @@ impl App {
             tab: Tab::Overview,
             profile_tab: ProfileTab::Buttons,
             info: None,
-            status: "Поиск геймпада…".into(),
+            status: t("Looking for the controller…").into(),
             toast: None,
             busy: false,
             settings: None,
@@ -311,11 +312,7 @@ impl App {
                 self.status = format!(
                     "{} · {}",
                     info.model(),
-                    if info.wired {
-                        "кабель"
-                    } else {
-                        "донгл"
-                    }
+                    if info.wired { t("cable") } else { t("dongle") }
                 );
                 self.nickname = info.nickname.clone();
                 self.info = Some(info);
@@ -323,7 +320,7 @@ impl App {
             Event::Disconnected(msg) => {
                 // an upload lets go of the pad on purpose
                 if self.info.is_some() && self.screen.job.is_none() {
-                    self.toast = Some(("Геймпад отключился".into(), true, Instant::now()));
+                    self.toast = Some((t("Controller disconnected").into(), true, Instant::now()));
                 }
                 self.info = None;
                 self.led_saved = None;
@@ -449,7 +446,7 @@ impl eframe::App for App {
         if self.screen.job.is_some() && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.toast = Some((
-                "Дождитесь конца загрузки картинки".into(),
+                t("Wait until the picture finishes uploading").into(),
                 true,
                 Instant::now(),
             ));
@@ -596,6 +593,7 @@ impl Shots {
 }
 
 fn main() -> eframe::Result {
+    apex5::lang::load();
     let (tx, wake) = channel();
     let window = tray::Window::default();
     // a screenshot run leaves a running copy alone

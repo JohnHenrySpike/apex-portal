@@ -1,7 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Apex 5 Control
-Comment=Настройка геймпада Flydigi Apex 5
+Comment=Configure the Flydigi Apex 5 controller
+Comment[ru]=Настройка геймпада Flydigi Apex 5
 Exec=apex5
 Icon=input-gaming
 Terminal=false

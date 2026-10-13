@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use apex5::device::{BUTTONS, InputState};
+use apex5::lang::t;
 use apex5::tester::{self, Gate, SECTORS};
 use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
@@ -58,8 +59,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     header(
         app,
         ui,
-        "Тест ввода",
-        "Нажимайте кнопки и двигайте стики — всё отображается в реальном времени",
+        t("Input test"),
+        t("Press buttons and move the sticks — everything shows in real time"),
     );
     ui.ctx().request_repaint_after(Duration::from_millis(16));
     let Some(s) = app.input() else {
@@ -67,7 +68,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().color(accent()));
                 ui.label(
-                    RichText::new("Ожидание данных от геймпада… пошевелите стиком").color(DIM),
+                    RichText::new(t("Waiting for data from the controller… move a stick"))
+                        .color(DIM),
                 );
             });
         });
@@ -136,7 +138,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .map(|(l, ..)| *l)
                 .collect();
             ui.horizontal(|ui| {
-                hint(ui, "Служебные кнопки:");
+                hint(ui, t("Service buttons:"));
                 for name in ["Fn", "Turbo", "Back"] {
                     let on = fn_keys.contains(&name);
                     let text = RichText::new(format!(" {name} ")).font(theme::medium(12.5));
@@ -148,18 +150,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
                 if let Some(hz) = rate {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{hz:.0} Гц")).monospace().color(TEXT));
-                        hint(ui, "Частота опроса:");
+                        ui.label(
+                            RichText::new(apex5::tr!("{hz} Hz", hz = format!("{hz:.0}")))
+                                .monospace()
+                                .color(TEXT),
+                        );
+                        hint(ui, t("Polling rate:"));
                     });
                 }
             });
         });
     };
     let right = |(s, _, sticks, (lt, rt), _, _): &mut View, ui: &mut egui::Ui| {
-        card_titled(ui, "Стики", |ui| {
+        card_titled(ui, t("Sticks"), |ui| {
             ui.horizontal(|ui| {
                 let w = ((ui.available_width() - 12.0) / 2.0).min(170.0);
-                for (i, name) in ["Левый", "Правый"].into_iter().enumerate() {
+                for (i, name) in [t("Left"), t("Right")].into_iter().enumerate() {
                     stick(
                         ui,
                         w,
@@ -173,30 +179,35 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             hint(
                 ui,
-                "Обведите стики по краю: цифра — среднее отклонение от круга.",
+                t(
+                    "Circle the sticks along the edge: the number is the average deviation \
+                     from a circle.",
+                ),
             );
             ui.add_space(2.0);
             if widgets::secondary(
                 ui,
-                "Сбросить след",
+                t("Reset trace"),
                 gates.iter().any(|g| g.coverage() > 0.0),
             )
-            .on_hover_text("«Датчик» — до обработки профилем, «Для игр» — то, что получают игры.")
+            .on_hover_text(t(
+                "\"Sensor\" is before the profile, \"For games\" is what games get.",
+            ))
             .clicked()
             {
                 reset.set(true);
             }
         });
         ui.add_space(12.0);
-        card_titled(ui, "Курки", |ui| {
+        card_titled(ui, t("Triggers"), |ui| {
             trigger(ui, "LT", *lt);
             trigger(ui, "RT", *rt);
         });
         ui.add_space(12.0);
-        card_titled(ui, "Движение", |ui| {
+        card_titled(ui, t("Motion"), |ui| {
             for (name, v, k, unit) in [
-                ("Гироскоп", s.gyro, 1.0f32 / 32768.0, ""),
-                ("Ускорение", s.accel, 1.0 / 16384.0, ""),
+                (t("Gyro"), s.gyro, 1.0f32 / 32768.0, ""),
+                (t("Acceleration"), s.accel, 1.0 / 16384.0, ""),
             ] {
                 ui.label(RichText::new(name).color(DIM));
                 for (axis, x) in ["X", "Y", "Z"].iter().zip(v) {
@@ -240,21 +251,19 @@ fn source(app: &mut App, ui: &mut egui::Ui, have_output: bool) {
             widgets::segmented(
                 ui,
                 &mut app.tester_output,
-                &[(false, "Датчик"), (true, "Для игр")],
+                &[(false, t("Sensor")), (true, t("For games"))],
             );
         });
         hint(
             ui,
             match (have_output, app.tester_output) {
-                (false, _) => {
-                    "Выход для игр недоступен: геймпад не виден как контроллер \
-                     (например, его захватил Steam)."
-                }
-                (true, false) => "Кнопки как нажаты, до профиля.",
-                (true, true) => {
-                    "Что получают игры: с назначениями, турбо и макросами. \
-                     M1–M4, Fn, Turbo и Back игры не видят."
-                }
+                (false, _) => t(
+                    "Output for games is unavailable: the controller isn't visible as a game \
+                     device (Steam may have grabbed it, for example).",
+                ),
+                (true, false) => t("Buttons as pressed, before the profile."),
+                (true, true) => t("What games get: with remapping, turbo and macros. \
+                     Games don't see M1–M4, Fn, Turbo and Back."),
             },
         );
     });
@@ -263,15 +272,16 @@ fn source(app: &mut App, ui: &mut egui::Ui, have_output: bool) {
 
 /// Runs the grip motors for under a second at the chosen strengths.
 fn rumble(app: &mut App, ui: &mut egui::Ui) {
-    card_titled(ui, "Проверка моторов", |ui| {
+    let title = t("Motor test");
+    card_titled(ui, title, |ui| {
         ui.spacing_mut().slider_width = (ui.available_width() - 260.0).clamp(80.0, 320.0);
         let (mut l, mut r) = app.rumble;
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Левый мотор").color(DIM));
+            ui.label(RichText::new(t("Left motor")).color(DIM));
             ui.add(widgets::slider(&mut l, 0..=100).suffix(" %"));
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Правый мотор").color(DIM));
+            ui.label(RichText::new(t("Right motor")).color(DIM));
             ui.add(widgets::slider(&mut r, 0..=100).suffix(" %"));
         });
         app.rumble = (l, r);
@@ -279,15 +289,17 @@ fn rumble(app: &mut App, ui: &mut egui::Ui) {
         let level = |v: u8| (v as u32 * 255 / 100) as u8;
         ui.horizontal(|ui| {
             let idle = !app.busy;
-            for (text, left, right) in [("Левый", l, 0), ("Правый", 0, r), ("Оба", l, r)]
-            {
+            for (text, left, right) in [(t("Left"), l, 0), (t("Right"), 0, r), (t("Both"), l, r)] {
                 if widgets::secondary(ui, text, idle && left.max(right) > 0).clicked() {
                     app.send(Cmd::TestRumble(level(left), level(right)));
                 }
             }
         });
         ui.add_space(4.0);
-        hint(ui, "Моторы работают меньше секунды и останавливаются сами.");
+        hint(
+            ui,
+            t("The motors run for under a second and stop on their own."),
+        );
     });
 }
 
@@ -348,9 +360,9 @@ fn stick(
                 .size(12.5)
                 .color(DIM),
         );
-        roundness(ui, "Датчик", gate, DIM);
+        roundness(ui, t("Sensor"), gate, DIM);
         if let Some(o) = out {
-            roundness(ui, "Для игр", o, theme::OK);
+            roundness(ui, t("For games"), o, theme::OK);
         }
     });
 }
@@ -359,8 +371,13 @@ fn stick(
 fn roundness(ui: &mut egui::Ui, what: &str, g: &Gate, colour: Color32) {
     let value = match g.error() {
         Some(e) => format!("{e:.1} %"),
-        None if g.coverage() > 0.0 => format!("обведено {:.0} %", g.coverage() * 100.0),
-        None => "не обведён".into(),
+        None if g.coverage() > 0.0 => {
+            apex5::tr!(
+                "circled {percent} %",
+                percent = format!("{:.0}", g.coverage() * 100.0)
+            )
+        }
+        None => t("not circled").into(),
     };
     ui.horizontal(|ui| {
         ui.label(RichText::new("━").size(12.5).color(colour));

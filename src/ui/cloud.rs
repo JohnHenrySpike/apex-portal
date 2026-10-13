@@ -7,6 +7,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use apex5::cloud::{self, FirmwareNews, GamePreset, Picture};
 use apex5::device::Info;
+use apex5::lang::t;
 use apex5::profile::Profile;
 use apex5::screen::{self, Fit};
 use eframe::egui::{self, CornerRadius, RichText, Stroke, TextureHandle, vec2};
@@ -108,12 +109,12 @@ fn error(ui: &mut egui::Ui, e: &str) {
 
 fn chip_name(chip: &str) -> &str {
     match chip {
-        "main" => "основная",
+        "main" => t("main chip"),
         "switch" => "Switch",
-        "screen" => "экран",
-        "NearLink" => "радио NearLink",
-        "dongle" => "донгл",
-        "trigger" => "курки",
+        "screen" => t("screen"),
+        "NearLink" => t("NearLink radio"),
+        "dongle" => t("dongle"),
+        "trigger" => t("triggers"),
         other => other,
     }
 }
@@ -128,13 +129,15 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     let mut check = false;
     row(
         ui,
-        "Обновления прошивки",
-        "Сверить версии с сервером Flydigi. Туда уходят только модель и версии прошивок",
+        t("Firmware updates"),
+        t(
+            "Compare the versions with Flydigi's server. Only the model and firmware versions are sent",
+        ),
         |ui| {
             if busy {
                 spinner(ui);
             }
-            check = widgets::secondary(ui, "Проверить", !busy).clicked();
+            check = widgets::secondary(ui, t("Check"), !busy).clicked();
         },
     );
     if check {
@@ -151,10 +154,10 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     let answer = |ui: &mut egui::Ui| {
         if let Some(path) = cloud::firmware_answer().filter(|p| p.exists())
             && ui
-                .link("Ответ сервера Flydigi (JSON)")
-                .on_hover_text(format!(
-                    "{}\nТам и описание изменений от Flydigi, обычно на китайском",
-                    path.display()
+                .link(t("Flydigi's server answer (JSON)"))
+                .on_hover_text(apex5::tr!(
+                    "{path}\nFlydigi's release notes are there too, usually in Chinese",
+                    path = path.display()
                 ))
                 .clicked()
         {
@@ -163,7 +166,7 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     };
     if news.is_empty() {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Все прошивки последние").color(OK));
+            ui.label(RichText::new(t("All firmware is up to date")).color(OK));
             answer(ui);
         });
         return;
@@ -171,11 +174,11 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     for n in news {
         ui.add_space(4.0);
         ui.label(
-            RichText::new(format!(
-                "Прошивка {}: есть {}, у геймпада {}",
-                chip_name(n.chip),
-                n.latest,
-                n.current
+            RichText::new(apex5::tr!(
+                "Firmware ({chip}): {latest} is out, the controller has {current}",
+                chip = chip_name(n.chip),
+                latest = n.latest,
+                current = n.current
             ))
             .color(WARN),
         );
@@ -183,8 +186,10 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     hint(
         ui,
-        "Обновить прошивку можно только во Flydigi Space Station на Windows: \
-         это приложение геймпад не прошивает.",
+        t(
+            "Firmware can only be updated in Flydigi Space Station on Windows: \
+             this app does not flash the controller.",
+        ),
     );
     answer(ui);
 }
@@ -195,17 +200,15 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
 /// edited profile: a line on the triggers page, the list in a dialog.
 pub fn game_presets(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
     st.games.poll();
-    card_titled(ui, "Пресеты Flydigi для игр", |ui| {
+    card_titled(ui, t("Flydigi game presets"), |ui| {
         row(
             ui,
-            "Вибрация игры по пресету",
-            "Оба курка — в режим «Вибрация игры» с настройками выбранной игры",
+            t("Game vibration from a preset"),
+            t("Both triggers to \"Game vibration\" mode with the chosen game's settings"),
             |ui| {
-                if widgets::secondary(ui, "Выбрать игру…", true)
-                    .on_hover_text(
-                        "Flydigi подбирает для игр, как вибрация рукояток передаётся в курки. \
-                         Список берётся с сервера Flydigi.",
-                    )
+                if widgets::secondary(ui, t("Choose a game…"), true)
+                    .on_hover_text(t("Flydigi tunes for each game how the grip rumble is passed to the triggers. \
+                         The list comes from Flydigi's server."))
                     .clicked()
                 {
                     st.games_open = true;
@@ -219,9 +222,10 @@ pub fn game_presets(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new(format!(
-                        "Поставлен пресет «{name}». Он начнёт работать после «Применить»; \
-                         вибрацию рукояток в профиле тоже нужно включить."
+                    RichText::new(apex5::tr!(
+                        "Preset \"{name}\" is set. It starts working after \"Apply\"; \
+                         grip rumble also needs to be on in the profile.",
+                        name
                     ))
                     .color(OK),
                 )
@@ -247,7 +251,7 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
         .show(ui.ctx(), |ui| {
             ui.set_width(520.0);
             ui.label(
-                RichText::new("Пресет курков для игры")
+                RichText::new(t("Trigger preset for a game"))
                     .font(super::theme::bold(18.0))
                     .color(TEXT),
             );
@@ -259,19 +263,19 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
                 }
                 if let Some(e) = &st.games.error {
                     error(ui, e);
-                    if widgets::secondary(ui, "Повторить", !busy).clicked() {
+                    if widgets::secondary(ui, t("Retry"), !busy).clicked() {
                         st.games.start(ui.ctx(), cloud::game_presets);
                     }
                 }
                 ui.add_space(8.0);
-                if widgets::secondary(ui, "Закрыть", true).clicked() {
+                if widgets::secondary(ui, t("Close"), true).clicked() {
                     close = true;
                 }
                 return;
             };
             ui.add(
                 egui::TextEdit::singleline(&mut st.game_filter)
-                    .hint_text(format!("Поиск среди {} игр", games.len()))
+                    .hint_text(apex5::tr!("Search {count} games", count = games.len()))
                     .desired_width(f32::INFINITY)
                     .margin(vec2(10.0, 6.0)),
             );
@@ -291,8 +295,12 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
                         // the selection's own text colour reads on its fill
                         let (name, detail) = (
                             RichText::new(&g.name),
-                            RichText::new(format!("порог {} · сила {}", b.block, b.scale))
-                                .size(12.0),
+                            RichText::new(apex5::tr!(
+                                "threshold {block} · strength {scale}",
+                                block = b.block,
+                                scale = b.scale
+                            ))
+                            .size(12.0),
                         );
                         let (name, detail) = if sel {
                             (name, detail)
@@ -317,22 +325,29 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
             if let Some(g) = chosen {
                 let [l, r] = &g.bind;
                 let detail = |b: &apex5::profile::TriggerBind| {
-                    format!("ход {}, частота {}", b.params[0], b.params[3])
+                    apex5::tr!(
+                        "travel {start}, frequency {strength}",
+                        start = b.params[0],
+                        strength = b.params[3]
+                    )
                 };
                 let text = if l == r {
                     detail(l)
                 } else {
-                    format!("слева {}; справа {}", detail(l), detail(r))
+                    apex5::tr!(
+                        "left {left}; right {right}",
+                        left = detail(l),
+                        right = detail(r)
+                    )
                 };
                 ui.label(RichText::new(text).size(12.5).color(DIM));
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if widgets::primary(ui, "Поставить в оба курка", chosen.is_some()).clicked()
-                {
+                if widgets::primary(ui, t("Set on both triggers"), chosen.is_some()).clicked() {
                     apply = chosen.cloned();
                 }
-                if widgets::secondary(ui, "Отмена", true).clicked() {
+                if widgets::secondary(ui, t("Cancel"), true).clicked() {
                     close = true;
                 }
             });
@@ -419,7 +434,7 @@ pub fn gallery(st: &mut State, enabled: bool, ui: &mut egui::Ui) -> Option<Pictu
     }
     if let Some(e) = &st.pictures.error {
         error(ui, e);
-        if widgets::secondary(ui, "Повторить", true).clicked() {
+        if widgets::secondary(ui, t("Retry"), true).clicked() {
             st.pictures.error = None;
         }
         return None;
@@ -435,12 +450,15 @@ pub fn gallery(st: &mut State, enabled: bool, ui: &mut egui::Ui) -> Option<Pictu
     let pics = st.pictures.value.as_ref().unwrap();
     let left = pics.len() - st.thumbs.len() - st.thumbs_failed.len();
     if left > 0 {
-        hint(ui, &format!("Загружаются картинки: осталось {left}"));
+        hint(ui, &apex5::tr!("Loading pictures: {left} left", left));
     } else if !st.thumbs_failed.is_empty() {
         let mut retry = false;
         ui.horizontal(|ui| {
-            error(ui, &format!("Не скачались: {}", st.thumbs_failed.len()));
-            retry = widgets::secondary(ui, "Повторить", true).clicked();
+            error(
+                ui,
+                &apex5::tr!("Did not download: {count}", count = st.thumbs_failed.len()),
+            );
+            retry = widgets::secondary(ui, t("Retry"), true).clicked();
         });
         if retry {
             let again: Vec<Picture> = pics

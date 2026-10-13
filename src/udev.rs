@@ -6,6 +6,8 @@ use std::process::Command;
 
 use anyhow::{Result, bail};
 
+use crate::lang::t;
+
 pub const RULES: &str = include_str!("../packaging/72-flydigi-apex5.rules");
 pub const PATH: &str = "/etc/udev/rules.d/72-flydigi-apex5.rules";
 
@@ -30,14 +32,16 @@ pub fn install() -> Result<()> {
         .status();
     let _ = std::fs::remove_file(&tmp);
     match status {
-        Err(e) => bail!("не удалось запустить pkexec: {e}"),
+        Err(e) => bail!(crate::tr!("could not start pkexec: {e}", e)),
         Ok(s) if s.success() => Ok(()),
         // pkexec: 126 = the prompt was dismissed, 127 = not authorised
-        Ok(s) if matches!(s.code(), Some(126 | 127)) => bail!("пароль не введён"),
-        Ok(s) => bail!(
-            "установка правила не удалась (код {})",
-            s.code().unwrap_or(-1)
-        ),
+        Ok(s) if matches!(s.code(), Some(126 | 127)) => {
+            bail!(t("password not entered"))
+        }
+        Ok(s) => bail!(crate::tr!(
+            "installing the rule failed (code {code})",
+            code = s.code().unwrap_or(-1)
+        )),
     }
 }
 

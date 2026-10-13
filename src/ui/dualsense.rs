@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use apex5::ds5;
+use apex5::lang::t;
 use apex5::worker::Cmd;
 use eframe::egui::{self, RichText, vec2};
 
@@ -16,13 +17,13 @@ use crate::App;
 const STEAM: &str = "env SDL_GAMECONTROLLER_IGNORE_DEVICES=0x37d7/0x2501 \
                      SDL_JOYSTICK_IGNORE_DEVICES=0x37d7/0x2501 steam";
 
-/// The "Режим DualSense" page.
+/// The "DualSense mode" page.
 pub fn page(app: &mut App, ui: &mut egui::Ui) {
     super::header(
         app,
         ui,
-        "Режим DualSense",
-        "Игры с адаптивными курками управляют курками Apex",
+        t("DualSense mode"),
+        t("Games with adaptive triggers drive the Apex triggers"),
     );
     let st = app.ds5();
     let ready = apex5::udev::uhid_ready();
@@ -32,8 +33,8 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
             .add_enabled_ui(ready || st.on, |ui| {
                 widgets::toggle_row(
                     ui,
-                    "Показывать играм DualSense",
-                    "Нагрев, отдача и вибрация курков — от самой игры (например, No Man's Sky)",
+                    t("Show games a DualSense"),
+                    t("Trigger build-up, kick and vibration come from the game itself (e.g. No Man's Sky)"),
                     &mut on,
                 )
             })
@@ -44,7 +45,9 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
         if st.on {
             hint(
                 ui,
-                "Пока режим включён, закрытое окно уходит в трей: игры не теряют DualSense",
+                t(
+                    "While the mode is on, closing the window sends it to the tray: games keep the DualSense",
+                ),
             );
         }
         widgets::separator(ui);
@@ -52,10 +55,10 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
         if !ready && !st.on {
             ui.add_space(4.0);
             ui.label(
-                RichText::new(
-                    "Нет доступа к /dev/uhid: нужно правило udev и модуль uhid. \
-                     Кнопка ниже поставит и то и другое.",
-                )
+                RichText::new(t(
+                    "No access to /dev/uhid: it needs a udev rule and the uhid module. \
+                     The button below sets up both.",
+                ))
                 .color(WARN),
             );
             ui.add_space(4.0);
@@ -65,23 +68,23 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
 
     if st.on {
         ui.add_space(12.0);
-        card_titled(ui, "Сейчас", |ui| {
+        card_titled(ui, t("Now"), |ui| {
             ui.horizontal_wrapped(|ui| {
                 pill(
                     ui,
                     if st.opened {
-                        "игра или Steam подключены"
+                        t("a game or Steam is connected")
                     } else {
-                        "пока никто не подключился"
+                        t("nobody has connected yet")
                     },
                     Some(if st.opened { accent() } else { FAINT }),
                 );
                 pill(
                     ui,
                     if st.pad {
-                        "Apex передаёт ввод"
+                        t("Apex passes input")
                     } else {
-                        "Apex не на связи: кнопки отпущены"
+                        t("Apex not responding: buttons released")
                     },
                     Some(if st.pad { accent() } else { WARN }),
                 );
@@ -94,14 +97,14 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
                     for (side, name) in [(0, "LT"), (1, "RT")] {
                         ui.label(RichText::new(name).color(DIM));
                         match &st.effects[side] {
-                            None => ui.label(RichText::new("игра ничего не задавала").color(FAINT)),
+                            None => ui.label(RichText::new(t("the game set nothing")).color(FAINT)),
                             Some((e, a)) => ui.add(
                                 egui::Label::new(
                                     RichText::new(format!(
                                         "{} → {}",
                                         ds5::describe(e),
                                         a.as_ref().map(ds5::describe_apex).unwrap_or_else(|| {
-                                            "не переводится, курок как был".into()
+                                            t("not translated, the trigger stays as it was").into()
                                         })
                                     ))
                                     .color(TEXT),
@@ -115,24 +118,28 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(6.0);
             hint(
                 ui,
-                "Эффекты курков из профиля сейчас не действуют. Вибрация рукояток идёт от игры, \
-                 если она включена в профиле.",
+                t(
+                    "The profile's trigger effects are off for now. Grip rumble comes from the game \
+                     if it's on in the profile.",
+                ),
             );
         });
         ui.ctx().request_repaint_after(Duration::from_millis(250));
     }
 
     ui.add_space(12.0);
-    card_titled(ui, "Запуск Steam", steam_hint);
+    card_titled(ui, t("Starting Steam"), steam_hint);
 }
 
 /// How much of the games' resistance reaches the Apex, kept between runs.
 fn resistance(app: &mut App, ui: &mut egui::Ui) {
     widgets::row(
         ui,
-        "Сила сопротивления от игры",
-        "Если курок приходится дожимать до конца (луч добычи в No Man's Sky), убавьте; \
-         нарастание нагрева останется",
+        t("Game resistance strength"),
+        t(
+            "If a trigger has to be pushed all the way (the mining beam in No Man's Sky), turn it \
+             down; the build-up stays",
+        ),
         |ui| {
             // left to right inside the row's right-aligned control
             let r = ui
@@ -161,8 +168,10 @@ fn resistance(app: &mut App, ui: &mut egui::Ui) {
 fn steam_hint(ui: &mut egui::Ui) {
     hint(
         ui,
-        "Steam сам открывает Apex и отдаёт играм его, а не DualSense. Перед игрой закройте Steam \
-         и запустите его так (Steam Input у игры оставьте по умолчанию):",
+        t(
+            "Steam opens the Apex itself and gives games it, not the DualSense. Before playing, close \
+             Steam and start it like this (leave the game's Steam Input at its default):",
+        ),
     );
     ui.add_space(6.0);
     egui::Frame::new()
@@ -177,7 +186,7 @@ fn steam_hint(ui: &mut egui::Ui) {
             );
         });
     ui.add_space(6.0);
-    if widgets::secondary(ui, "Копировать команду", true).clicked() {
+    if widgets::secondary(ui, t("Copy command"), true).clicked() {
         ui.ctx().copy_text(STEAM.into());
     }
 }

@@ -8,6 +8,7 @@
 //! LICENSES/openflydigi-MIT.txt. The effect translation is this app's own.
 
 use crate::evdev::Output;
+use crate::lang::t;
 
 pub const VENDOR: u32 = 0x054C;
 pub const PRODUCT: u32 = 0x0CE6;
@@ -370,17 +371,20 @@ pub fn describe(e: &Effect) -> String {
         .max()
         .unwrap_or(0);
     match e.kind {
-        0x00 | 0x05 => "нет эффекта".into(),
-        0x21 => format!("сопротивление {level} из 8"),
-        0x25 => format!("упор, сила {} из 8", (p[2] & 7) + 1),
-        0x22 => "тетива лука".into(),
-        0x26 => format!("вибрация {level} из 8, {} Гц", p[8]),
-        0x23 => "галоп".into(),
-        0x27 => "очередь".into(),
-        0x01 => "сопротивление".into(),
-        0x02 => "упор".into(),
-        0x06 => "вибрация".into(),
-        k => format!("эффект 0x{k:02x}"),
+        0x00 | 0x05 => t("no effect").into(),
+        0x21 => crate::tr!("resistance {level} of 8", level),
+        0x25 => crate::tr!(
+            "hard stop, strength {strength} of 8",
+            strength = (p[2] & 7) + 1
+        ),
+        0x22 => t("bow string").into(),
+        0x26 => crate::tr!("vibration {level} of 8, {hz} Hz", level, hz = p[8]),
+        0x23 => t("gallop").into(),
+        0x27 => t("burst").into(),
+        0x01 => t("resistance").into(),
+        0x02 => t("hard stop").into(),
+        0x06 => t("vibration").into(),
+        k => crate::tr!("effect 0x{k}", k = format!("{k:02x}")),
     }
 }
 
@@ -388,11 +392,15 @@ pub fn describe(e: &Effect) -> String {
 pub fn describe_apex(a: &Apex) -> String {
     let p = &a.params;
     match a.mode {
-        1 => format!("Гоночный, сила {}", p[1]),
-        2 => format!("Очередь, сила {}, частота {}", p[2], p[3]),
-        3 => format!("Прорыв, сила {}", p[2]),
-        4 => "Блокировка".into(),
-        _ => "Обычный".into(),
+        1 => crate::tr!("Racing, strength {strength}", strength = p[1]),
+        2 => crate::tr!(
+            "Burst, strength {strength}, frequency {frequency}",
+            strength = p[2],
+            frequency = p[3]
+        ),
+        3 => crate::tr!("Breakpoint, strength {strength}", strength = p[2]),
+        4 => t("Lock").into(),
+        _ => t("Normal").into(),
     }
 }
 

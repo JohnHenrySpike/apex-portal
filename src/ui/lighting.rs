@@ -2,6 +2,7 @@
 
 use std::time::{Duration, Instant};
 
+use apex5::lang::t;
 use apex5::lighting::{Effect, LedConfig, hue, left_to_right};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
 
@@ -16,15 +17,15 @@ const TICK: f64 = 0.1;
 
 pub fn effect_name(e: Effect) -> &'static str {
     match e {
-        Effect::Off => "Выключена",
-        Effect::Solid => "Один цвет",
-        Effect::Breath => "Дыхание",
-        Effect::Flow => "Перетекание",
-        Effect::Rotation => "Вращение",
-        Effect::Wave => "Волна",
-        Effect::Rainbow => "Радуга",
-        Effect::Flash => "Мигание",
-        Effect::StaticMulti => "Градиент",
+        Effect::Off => t("Off#lighting"),
+        Effect::Solid => t("Solid"),
+        Effect::Breath => t("Breathing"),
+        Effect::Flow => t("Flow"),
+        Effect::Rotation => t("Rotation"),
+        Effect::Wave => t("Wave"),
+        Effect::Rainbow => t("Rainbow"),
+        Effect::Flash => t("Flashing"),
+        Effect::StaticMulti => t("Gradient"),
     }
 }
 
@@ -61,7 +62,12 @@ pub fn current_frame(cfg: &LedConfig, t: f64) -> Vec<[u8; 3]> {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    header(app, ui, "Подсветка", "Изменения сразу видны на геймпаде");
+    header(
+        app,
+        ui,
+        t("Lighting"),
+        t("Changes show on the controller right away"),
+    );
     if app.led.is_none() {
         ui.add(egui::Spinner::new().color(accent()));
         return;
@@ -112,22 +118,26 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
     let (dot, title, sub) = if dirty {
         (
             WARN,
-            "Подсветка изменена",
-            "Видна на геймпаде, но сбросится, когда он уснёт",
+            t("Lighting changed"),
+            t("Shown on the controller, but it resets when the controller sleeps"),
         )
     } else {
-        (theme::OK, "Всё сохранено", "Подсветка сохранена в геймпаде")
+        (
+            theme::OK,
+            t("All saved"),
+            t("The lighting is saved in the controller"),
+        )
     };
     widgets::save_bar(ui, "lighting_actions", dot, title, sub, |ui| {
         let busy = app.busy;
-        if widgets::primary(ui, "Сохранить", dirty && !busy)
-            .on_hover_text("Сохранить подсветку во флеш-память геймпада")
+        if widgets::primary(ui, t("Save"), dirty && !busy)
+            .on_hover_text(t("Save the lighting to the controller's flash"))
             .clicked()
         {
             app.save_led();
         }
-        if widgets::secondary(ui, "Отменить", dirty && !busy && app.led_saved.is_some())
-            .on_hover_text("Вернуть подсветку, какой она была до изменений")
+        if widgets::secondary(ui, t("Revert"), dirty && !busy && app.led_saved.is_some())
+            .on_hover_text(t("Put the lighting back the way it was before the changes"))
             .clicked()
         {
             app.revert_led();
@@ -166,7 +176,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     let Some(led) = app.led.as_mut() else { return };
     let mut changed = false;
 
-    card_titled(ui, "Эффект", |ui| {
+    card_titled(ui, t("Effect"), |ui| {
         let cols = 3;
         let gap = 8.0;
         let w = (ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32;
@@ -188,7 +198,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
 
     if led.effect.uses_colours() {
         ui.add_space(12.0);
-        card_titled(ui, "Цвета", |ui| {
+        card_titled(ui, t("Colours"), |ui| {
             let multi = !matches!(led.effect, Effect::Solid);
             ui.horizontal(|ui| {
                 ui.spacing_mut().interact_size = vec2(46.0, 34.0);
@@ -198,9 +208,9 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
                     let r = ui.color_edit_button_srgb(c);
                     changed |= r.changed();
                     let r = r.on_hover_text(if can_remove {
-                        "Нажмите, чтобы изменить. ПКМ — удалить"
+                        t("Click to change. Right-click to remove")
                     } else {
-                        "Нажмите, чтобы изменить"
+                        t("Click to change")
                     });
                     if can_remove && r.secondary_clicked() {
                         remove = Some(i);
@@ -214,14 +224,17 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
                     let r = ui.add(
                         egui::Button::new(RichText::new("+").size(18.0)).min_size(vec2(46.0, 34.0)),
                     );
-                    if r.on_hover_text("Добавить цвет").clicked() {
+                    if r.on_hover_text(t("Add a colour")).clicked() {
                         led.colours.push(hue(led.colours.len() as f32 / 5.0 + 0.33));
                         changed = true;
                     }
                 }
             });
             if multi {
-                hint(ui, "До пяти цветов. Правый клик по цвету — удалить.");
+                hint(
+                    ui,
+                    t("Up to five colours. Right-click a colour to remove it."),
+                );
             }
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
@@ -239,7 +252,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
                         c,
                         Stroke::new(1.0, Color32::from_black_alpha(80)),
                     );
-                    if r.on_hover_text("Сделать первым цветом").clicked() {
+                    if r.on_hover_text(t("Make it the first colour")).clicked() {
                         if let Some(first) = led.colours.first_mut() {
                             *first = p;
                         }
@@ -251,12 +264,13 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     }
 
     ui.add_space(12.0);
-    card_titled(ui, "Яркость и скорость", |ui| {
+    let title = t("Brightness and speed");
+    card_titled(ui, title, |ui| {
         ui.spacing_mut().slider_width = (ui.available_width() - 200.0).max(100.0);
         ui.horizontal(|ui| {
             ui.add_sized(
                 [90.0, 24.0],
-                egui::Label::new(RichText::new("Яркость").color(DIM)),
+                egui::Label::new(RichText::new(t("Brightness")).color(DIM)),
             );
             let mut b = led.cfg.brightness();
             if ui
@@ -271,7 +285,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.add_sized(
                     [90.0, 24.0],
-                    egui::Label::new(RichText::new("Скорость").color(DIM)),
+                    egui::Label::new(RichText::new(t("Speed")).color(DIM)),
                 );
                 // Stored as a cycle time (bigger = slower); shown as speed.
                 let mut speed = 31 - led.cfg.cycle().clamp(1, 30);
@@ -288,8 +302,11 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         let mut on = led.cfg.grip_sync();
         if widgets::toggle_row(
             ui,
-            "Вспышка при вибрации",
-            "Подсветка ярко вспыхивает, пока работают моторы рукояток. Саму вибрацию не включает.",
+            t("Flash on rumble"),
+            t(
+                "The lighting flashes brightly while the grip motors run. It doesn't turn on \
+                 vibration itself.",
+            ),
             &mut on,
         ) {
             led.cfg.set_grip_sync(on);

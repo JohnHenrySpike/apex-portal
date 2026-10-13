@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use apex5::lang::t;
 use apex5::library;
 use apex5::worker::Cmd;
 use eframe::egui::{self, RichText, vec2};
@@ -31,7 +32,7 @@ fn unsaved(app: &App) -> bool {
 
 /// The "⋯" menu next to the profile tabs: copies, files, factory values.
 pub fn menu(app: &mut App, ui: &mut egui::Ui) {
-    let r = widgets::icon_button(ui, widgets::Icon::More, "Копии, файлы, заводские значения");
+    let r = widgets::icon_button(ui, widgets::Icon::More, t("Copies, files, factory values"));
     let here = app.active;
     let idle = !app.busy;
     let unsaved = unsaved(app);
@@ -41,22 +42,22 @@ pub fn menu(app: &mut App, ui: &mut egui::Ui) {
             let b = ui
                 .add_enabled(
                     idle && !unsaved,
-                    egui::Button::new(format!("Копировать в профиль {}", slot + 1)),
+                    egui::Button::new(apex5::tr!("Copy to profile {slot}", slot = slot + 1)),
                 )
-                .on_disabled_hover_text("Сначала сохраните изменения профиля и подсветки");
+                .on_disabled_hover_text(t("Save the profile and lighting changes first"));
             if b.clicked() {
                 app.copy_dialog = Some(Dialog::CopyTo(slot));
             }
         }
         ui.separator();
-        if ui.button("Сохранить в файл…").clicked() {
+        if ui.button(t("Save to file…")).clicked() {
             if app.save_name.is_empty() {
                 app.save_name = super::profile::shown_title(&app.title);
             }
             app.copy_dialog = Some(Dialog::Save);
         }
         if ui
-            .add_enabled(idle, egui::Button::new("Загрузить из файла…"))
+            .add_enabled(idle, egui::Button::new(t("Load from file…")))
             .clicked()
         {
             app.library = None;
@@ -64,10 +65,10 @@ pub fn menu(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.separator();
         if ui
-            .button("Заводские значения")
-            .on_hover_text(
-                "Вернуть заводские значения этого профиля, вибрацию тоже. Нужно будет применить.",
-            )
+            .button(t("Factory values"))
+            .on_hover_text(t(
+                "Restore this profile's factory values, vibration too. It will need applying.",
+            ))
             .clicked()
             && let Some(e) = app.edit.as_mut()
         {
@@ -106,20 +107,20 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
     let dismissed = match d {
         Dialog::CopyTo(slot) => modal(
             ui,
-            &format!("Заменить профиль {}?", slot + 1),
+            &apex5::tr!("Replace profile {slot}?", slot = slot + 1),
             |ui| {
                 hint(
                     ui,
-                    &format!(
-                        "Профиль {} вместе с подсветкой, как они сохранены в геймпаде, \
-                     заменит профиль {} и сохранится в нём.",
-                        here + 1,
-                        slot + 1
+                    &apex5::tr!(
+                        "Profile {here} with its lighting, as saved in the controller, \
+                     will replace profile {slot} and be saved there.",
+                        here = here + 1,
+                        slot = slot + 1
                     ),
                 );
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if widgets::primary(ui, "Заменить", !app.busy).clicked()
+                    if widgets::primary(ui, t("Replace"), !app.busy).clicked()
                         && let Some(p) = app.pad_profile.clone()
                     {
                         let led = app.led.as_ref().map(|l| l.cfg.clone());
@@ -130,28 +131,25 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
                         });
                         close = true;
                     }
-                    if widgets::secondary(ui, "Отмена", true).clicked() {
+                    if widgets::secondary(ui, t("Cancel"), true).clicked() {
                         close = true;
                     }
                 });
             },
         ),
-        Dialog::Save => modal(ui, "Сохранить профиль в файл", |ui| {
-            hint(
-                ui,
-                "Профиль и подсветка в том виде, как они сейчас на экране.",
-            );
+        Dialog::Save => modal(ui, t("Save profile to file"), |ui| {
+            hint(ui, t("The profile and lighting as they are on screen now."));
             ui.add_space(8.0);
             let r = ui.add(
                 egui::TextEdit::singleline(&mut app.save_name)
                     .desired_width(f32::INFINITY)
-                    .hint_text("название файла")
+                    .hint_text(t("file name"))
                     .margin(vec2(10.0, 7.0)),
             );
             let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if let Some(d) = library::dir() {
                 ui.label(
-                    RichText::new(format!("в папку {}", d.display()))
+                    RichText::new(apex5::tr!("to the folder {dir}", dir = d.display()))
                         .size(12.0)
                         .color(FAINT),
                 );
@@ -159,22 +157,17 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 let ok = !app.save_name.trim().is_empty();
-                if (widgets::primary(ui, "Сохранить", ok).clicked() || (enter && ok)) && save(app)
-                {
+                if (widgets::primary(ui, t("Save"), ok).clicked() || (enter && ok)) && save(app) {
                     close = true;
                 }
-                if widgets::secondary(ui, "Отмена", true).clicked() {
+                if widgets::secondary(ui, t("Cancel"), true).clicked() {
                     close = true;
                 }
             });
         }),
-        Dialog::Library(None) => modal(
-            ui,
-            "Загрузить профиль из файла",
-            |ui| {
-                close = library_list(app, ui);
-            },
-        ),
+        Dialog::Library(None) => modal(ui, t("Load profile from file"), |ui| {
+            close = library_list(app, ui);
+        }),
         Dialog::Library(Some(path)) => {
             let name = path
                 .file_stem()
@@ -182,23 +175,25 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
                 .unwrap_or_default();
             modal(
                 ui,
-                &format!("Заменить профиль {}?", here + 1),
+                &apex5::tr!("Replace profile {here}?", here = here + 1),
                 |ui| {
-                    hint(
-                        ui,
-                        &format!(
-                            "Профиль {} заменит «{name}»{} и сохранится в геймпаде.",
-                            here + 1,
-                            if app.load_lighting {
-                                " вместе с подсветкой"
-                            } else {
-                                ""
-                            }
-                        ),
-                    );
+                    hint(ui, &{
+                        let n = here + 1;
+                        let with = if app.load_lighting {
+                            t(" along with the lighting")
+                        } else {
+                            ""
+                        };
+                        apex5::tr!(
+                            "\"{name}\"{with} will replace profile {n} and be saved in the controller.",
+                            name,
+                            with,
+                            n
+                        )
+                    });
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        if widgets::primary(ui, "Заменить", !app.busy).clicked() {
+                        if widgets::primary(ui, t("Replace"), !app.busy).clicked() {
                             match library::load(&path) {
                                 Ok((profile, led)) => app.send(Cmd::Install {
                                     profile,
@@ -211,7 +206,7 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
                             }
                             close = true;
                         }
-                        if widgets::secondary(ui, "Назад", true).clicked() {
+                        if widgets::secondary(ui, t("Back"), true).clicked() {
                             app.copy_dialog = Some(Dialog::Library(None));
                         }
                     });
@@ -227,11 +222,11 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
 /// Saved profiles to pick from. Returns true to close the dialog.
 fn library_list(app: &mut App, ui: &mut egui::Ui) -> bool {
     let mut close = false;
-    ui.checkbox(&mut app.load_lighting, "Вместе с подсветкой");
+    ui.checkbox(&mut app.load_lighting, t("Along with the lighting"));
     ui.add_space(6.0);
     let entries = app.library.get_or_insert_with(library::list);
     if entries.is_empty() {
-        ui.label(RichText::new("Пока ничего не сохранено").color(FAINT));
+        ui.label(RichText::new(t("Nothing saved yet")).color(FAINT));
     }
     let mut pick = None;
     egui::ScrollArea::vertical()
@@ -247,14 +242,17 @@ fn library_list(app: &mut App, ui: &mut egui::Ui) -> bool {
                         ui.spacing_mut().item_spacing.y = 1.0;
                         ui.label(RichText::new(&e.name).font(theme::medium(14.0)).color(TEXT));
                         let sub = if e.has_lighting {
-                            format!("«{}», с подсветкой", super::profile::shown_title(&e.title))
+                            apex5::tr!(
+                                "\"{title}\", with lighting",
+                                title = super::profile::shown_title(&e.title)
+                            )
                         } else {
-                            format!("«{}»", super::profile::shown_title(&e.title))
+                            apex5::tr!("\"{title}\"", title = super::profile::shown_title(&e.title))
                         };
                         ui.label(RichText::new(sub).size(12.0).color(DIM));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if widgets::secondary(ui, "Загрузить", true).clicked() {
+                        if widgets::secondary(ui, t("Load"), true).clicked() {
                             pick = Some(e.path.clone());
                         }
                     });
@@ -267,17 +265,17 @@ fn library_list(app: &mut App, ui: &mut egui::Ui) -> bool {
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         let folder = library::dir();
-        if widgets::secondary(ui, "Открыть папку", folder.is_some()).clicked()
+        if widgets::secondary(ui, t("Open folder"), folder.is_some()).clicked()
             && let Some(d) = &folder
         {
             let _ = std::fs::create_dir_all(d);
             let _ = std::process::Command::new("xdg-open").arg(d).spawn();
         }
-        if widgets::secondary(ui, "Обновить", true).clicked() {
+        if widgets::secondary(ui, t("Refresh"), true).clicked() {
             app.library = None;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::secondary(ui, "Закрыть", true).clicked() {
+            if widgets::secondary(ui, t("Close"), true).clicked() {
                 close = true;
             }
         });
@@ -291,7 +289,7 @@ fn save(app: &mut App) -> bool {
     let led = app.led.as_ref().map(|l| l.cfg.clone());
     let kind = app.info.as_ref().map_or(0, |i| i.device_type);
     let msg = match library::save(&app.save_name, &p, led.as_ref(), kind) {
-        Ok(path) => (format!("Сохранено: {}", path.display()), false),
+        Ok(path) => (apex5::tr!("Saved: {path}", path = path.display()), false),
         Err(e) => (format!("{e:#}"), true),
     };
     let ok = !msg.1;

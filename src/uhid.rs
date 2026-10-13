@@ -64,9 +64,14 @@ impl Device {
             .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
             .open(PATH)
             .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => anyhow!("нет {PATH}: модуль uhid не загружен"),
+                std::io::ErrorKind::NotFound => {
+                    anyhow!(crate::tr!("no {PATH}: the uhid module is not loaded", PATH))
+                }
                 std::io::ErrorKind::PermissionDenied => {
-                    anyhow!("нет доступа к {PATH}: нужно правило udev")
+                    anyhow!(crate::tr!(
+                        "no access to {PATH}: a udev rule is needed",
+                        PATH
+                    ))
                 }
                 _ => anyhow!("{PATH}: {e}"),
             })?;

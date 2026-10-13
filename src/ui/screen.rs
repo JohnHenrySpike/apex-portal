@@ -7,6 +7,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use apex5::cloud::Picture;
+use apex5::lang::t;
 use apex5::screen::{self, Crop, Source, Stage, Upload};
 use apex5::worker::Cmd;
 use eframe::egui::{
@@ -199,9 +200,9 @@ fn pick(app: &mut App, ctx: &egui::Context) {
     let ctx = ctx.clone();
     std::thread::spawn(move || {
         let file = rfd::FileDialog::new()
-            .set_title("Картинка для экрана геймпада")
-            .add_filter("Картинка или GIF", &["png", "jpg", "jpeg", "gif"])
-            .add_filter("Заводская анимация Flydigi", &["bin"])
+            .set_title(t("Picture for the controller's screen"))
+            .add_filter(t("Picture or GIF"), &["png", "jpg", "jpeg", "gif"])
+            .add_filter(t("Flydigi factory animation"), &["bin"])
             .pick_file();
         if let Some(p) = file {
             let _ = tx.send(load(p).map_err(|e| format!("{e:#}")));
@@ -238,7 +239,7 @@ fn poll(app: &mut App) {
             app.screen.loading = None;
         }
         Ok(Err(e)) => {
-            app.screen.result = Some((format!("Не открылось: {e}"), true));
+            app.screen.result = Some((apex5::tr!("Couldn't open: {e}", e), true));
             app.screen.loading = None;
         }
         Err(TryRecvError::Disconnected) => app.screen.loading = None, // cancelled
@@ -264,13 +265,17 @@ fn poll_install(app: &mut App) {
     let r = match rx.try_recv() {
         Ok(r) => r,
         Err(TryRecvError::Empty) => return,
-        Err(TryRecvError::Disconnected) => Err("установка прервалась".into()),
+        Err(TryRecvError::Disconnected) => Err(t("the install was interrupted").into()),
     };
     app.screen.installing = None;
     app.screen.rule = None;
     app.toast = Some(match r {
-        Ok(()) => ("Правило udev установлено".into(), false, Instant::now()),
-        Err(e) => (format!("Правило не установлено: {e}"), true, Instant::now()),
+        Ok(()) => (t("udev rule installed").into(), false, Instant::now()),
+        Err(e) => (
+            apex5::tr!("Rule not installed: {e}", e),
+            true,
+            Instant::now(),
+        ),
     });
 }
 
@@ -278,10 +283,9 @@ fn poll_install(app: &mut App) {
 /// Returns whether it was pressed.
 fn rule_button(ui: &mut egui::Ui, busy: bool) -> bool {
     ui.horizontal(|ui| {
-        let r = widgets::secondary(ui, "Установить правило…", !busy).on_hover_text(format!(
-            "Запишет {} и перечитает правила udev. Пароль спросит система, не приложение",
-            apex5::udev::PATH
-        ));
+        let r = widgets::secondary(ui, t("Install rule…"), !busy).on_hover_text(
+            apex5::tr!("Writes {path} and reloads the udev rules. The system asks for the password, not the app", path = apex5::udev::PATH),
+        );
         if busy {
             ui.add(egui::Spinner::new().color(accent()));
         }
@@ -328,16 +332,18 @@ pub fn on_done(app: &mut App, r: Result<(), String>) {
     let (msg, err) = match r {
         Ok(()) => {
             app.screen.draft = None;
-            ("Картинка загружена".to_string(), false)
+            (t("Picture uploaded").to_string(), false)
         }
         Err(e) if started => (
-            format!(
-                "Не загружено: {e}. Попробуйте ещё раз: экран ждёт загрузку, пока геймпад \
-                 не выключат. Если не выходит, выключите и включите геймпад переключателем сзади"
+            apex5::tr!(
+                "Not uploaded: {e}. Try again: the screen waits for the upload until the controller \
+                 is turned off. If it doesn't work, turn the controller off and on with the switch \
+                 on its back",
+                e
             ),
             true,
         ),
-        Err(e) => (format!("Не загружено: {e}"), true),
+        Err(e) => (apex5::tr!("Not uploaded: {e}", e), true),
     };
     app.toast = Some((msg.clone(), err, Instant::now()));
     app.screen.result = Some((msg, err));
@@ -352,19 +358,22 @@ enum Action {
     Clear,
 }
 
-/// The "Экран" page: the screen switches, own picture and Flydigi's.
+/// The "Screen" page: the screen switches, own picture and Flydigi's.
 pub fn page(app: &mut App, ui: &mut egui::Ui) {
-    super::header(app, ui, "Экран", "Картинка на экране геймпада");
+    super::header(
+        app,
+        ui,
+        t("Screen"),
+        t("The picture on the controller's screen"),
+    );
     poll(app);
     poll_install(app);
-    widgets::card_titled(ui, "Экран", |ui| switches(app, ui));
+    widgets::card_titled(ui, t("Screen"), |ui| switches(app, ui));
     let mut action = None;
     ui.add_space(12.0);
-    widgets::card_titled(ui, "Своя картинка", |ui| {
-        own(app, ui, &mut action)
-    });
+    widgets::card_titled(ui, t("Own picture"), |ui| own(app, ui, &mut action));
     ui.add_space(12.0);
-    widgets::card_titled(ui, "Подборка Flydigi", |ui| {
+    widgets::card_titled(ui, t("Flydigi's collection"), |ui| {
         flydigi(app, ui, &mut action)
     });
     match action {
@@ -393,16 +402,18 @@ fn switches(app: &mut App, ui: &mut egui::Ui) {
     for (sub, name, hint_text, more) in [
         (
             9u8,
-            "Экран всегда включён",
-            "Не гасить экран во время игры",
+            t("Screen always on"),
+            t("Don't turn the screen off while playing"),
             "",
         ),
         (
             8,
-            "Строка состояния всегда видна",
-            "Батарея и профиль поверх картинки",
-            "Экспериментально: Flydigi Space Station этой настройки не показывает и сама \
-             выключает её при каждом подключении",
+            t("Status bar always visible"),
+            t("Battery and profile over the picture"),
+            t(
+                "Experimental: Flydigi Space Station doesn't show this setting and turns it off \
+                 itself on every connection",
+            ),
         ),
     ] {
         if !s.is_supported(sub) {
@@ -423,21 +434,21 @@ fn switches(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// The "Своя картинка" card: the file, the editor, the upload.
+/// The own picture card: the file, the editor, the upload.
 fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
     let loading = app.screen.loading.is_some();
     ui.horizontal_wrapped(|ui| {
-        let r = widgets::secondary(ui, "Выбрать файл…", !loading && !app.busy).on_hover_text(
-            "Экран геймпада 160 × 80. Заводскую анимацию возвращает файл \
-             default_screen_image_<тип>.bin из Flydigi Space Station",
-        );
+        let r = widgets::secondary(ui, t("Choose file…"), !loading && !app.busy).on_hover_text(t(
+            "The controller's screen is 160 × 80. The factory animation comes back with the file \
+                 default_screen_image_<type>.bin from Flydigi Space Station",
+        ));
         if r.clicked() {
             *action = Some(Action::Pick);
         }
         if loading {
             ui.add(egui::Spinner::new().color(accent()));
         }
-        hint(ui, "PNG, JPEG или GIF до 150 кадров");
+        hint(ui, t("PNG, JPEG or GIF up to 150 frames"));
     });
     if let Some((msg, err)) = &app.screen.result {
         ui.add_space(4.0);
@@ -479,15 +490,21 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
         ui.add_space(12.0);
         let wrong_model = d.source.is_none() && d.factory_type != device_type;
         let blocker = if !wired {
-            Some("Подключите геймпад кабелем: через донгл загрузка невозможна".to_string())
+            Some(
+                t("Connect the controller by cable: uploading through the dongle isn't possible")
+                    .to_string(),
+            )
         } else if !rule {
-            Some(screen::RULE_HINT.to_string())
+            Some(screen::rule_hint().to_string())
         } else if wrong_model {
             Some(match device_type {
-                Some(t) => {
-                    format!("Нужен файл default_screen_image_{t}.bin: этот для другой модели")
+                Some(ty) => {
+                    apex5::tr!(
+                        "Needs the file default_screen_image_{ty}.bin: this one is for another model",
+                        ty
+                    )
                 }
-                None => "Геймпад не подключён".to_string(),
+                None => t("Controller not connected").to_string(),
             })
         } else {
             d.error.clone()
@@ -504,23 +521,23 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
             }
             None => {
                 ui.label(
-                    RichText::new("Пока идёт загрузка, не отключайте кабель")
+                    RichText::new(t("Don't unplug the cable while uploading"))
                         .size(12.5)
                         .color(DIM),
                 )
-                .on_hover_text(
-                    "Пока идёт загрузка, не отключайте кабель и не выключайте геймпад. \
-                     Приложением в это время пользоваться нельзя. В конце геймпад \
-                     перезагрузится.",
-                );
+                .on_hover_text(t(
+                    "While uploading, don't unplug the cable or turn the controller off. \
+                     The app can't be used meanwhile. At the end the controller \
+                     restarts.",
+                ));
             }
         }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             let text = if armed {
-                "Точно загрузить? Нажмите ещё раз"
+                t("Upload for sure? Press again")
             } else {
-                "Загрузить на геймпад"
+                t("Upload to controller")
             };
             if widgets::primary(ui, text, blocker.is_none() && !busy).clicked() {
                 if armed {
@@ -534,10 +551,10 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
             }
             if armed {
                 ui.ctx().request_repaint_after(Duration::from_millis(250));
-                if ui.button("Отмена").clicked() {
+                if ui.button(t("Cancel")).clicked() {
                     arm = Some(None);
                 }
-            } else if widgets::secondary(ui, "Убрать", true).clicked() {
+            } else if widgets::secondary(ui, t("Remove"), true).clicked() {
                 *action = Some(Action::Clear);
             }
         });
@@ -547,28 +564,21 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
     }
 }
 
-/// The "Подборка Flydigi" card: shown on request, it goes to Flydigi's server.
+/// The Flydigi gallery card: shown on request, it goes to Flydigi's server.
 fn flydigi(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
     let open = app.cloud.gallery_open;
     let loading = app.screen.loading.is_some();
     let sub = if loading && open {
-        "Открывается…"
+        t("Opening…")
     } else if open {
-        "Нажмите на картинку, чтобы открыть её выше"
+        t("Click a picture to open it above")
     } else {
-        "Скачиваются с сервера Flydigi"
+        t("Downloaded from Flydigi's server")
     };
-    let button = if open {
-        "Скрыть"
-    } else {
-        "Показать"
-    };
-    let toggle = row(
-        ui,
-        "Картинки и анимации Flydigi",
-        sub,
-        |ui| widgets::secondary(ui, button, true).clicked(),
-    );
+    let button = if open { t("Hide") } else { t("Show") };
+    let toggle = row(ui, t("Flydigi pictures and animations"), sub, |ui| {
+        widgets::secondary(ui, button, true).clicked()
+    });
     if toggle {
         app.cloud.gallery_open = !open;
     }
@@ -593,26 +603,29 @@ fn edit_column(d: &mut Draft, ui: &mut egui::Ui) {
     let (w, h) = d.size();
     let mut set = None;
     ui.horizontal_wrapped(|ui| {
-        if widgets::secondary(ui, "Заполнить", true)
-            .on_hover_text("Картинка на весь экран, лишнее обрезано")
+        if widgets::secondary(ui, t("Fill"), true)
+            .on_hover_text(t("The picture fills the screen, the rest is cut off"))
             .clicked()
         {
             set = Some(Crop::fill(w, h));
         }
-        if widgets::secondary(ui, "Целиком", true)
-            .on_hover_text("Вся картинка, по краям чёрные полосы")
+        if widgets::secondary(ui, t("Fit"), true)
+            .on_hover_text(t("The whole picture, black bars at the edges"))
             .clicked()
         {
             set = Some(Crop::whole(w, h));
         }
-        if widgets::secondary(ui, "По центру", true)
-            .on_hover_text("Рамка того же размера посередине картинки")
+        if widgets::secondary(ui, t("Center#crop"), true)
+            .on_hover_text(t("A frame of the same size in the middle of the picture"))
             .clicked()
         {
             set = Some(d.crop.centered());
         }
     });
-    hint(ui, "Тяните рамку или её углы, колесо мыши меняет масштаб");
+    hint(
+        ui,
+        t("Drag the frame or its corners, the mouse wheel zooms"),
+    );
     if let Some(c) = set {
         d.crop = c;
         d.touched = None;
@@ -933,16 +946,16 @@ fn about(ui: &mut egui::Ui, d: &mut Draft) {
     ui.add(egui::Label::new(RichText::new(&d.name).color(TEXT)).truncate());
     let n = d.upload.frames;
     let what = match (&d.source, n) {
-        (None, _) => format!("Заводская анимация Flydigi, кадров: {n}"),
-        (Some(_), 1) => "Картинка".to_string(),
-        (Some(_), _) => format!("Анимация, кадров: {n}"),
+        (None, _) => apex5::tr!("Flydigi factory animation, frames: {n}", n),
+        (Some(_), 1) => t("Picture").to_string(),
+        (Some(_), _) => apex5::tr!("Animation, frames: {n}", n),
     };
     hint(ui, &what);
     if d.source.as_ref().is_some_and(|s| s.cut) {
         ui.label(
-            RichText::new(format!(
-                "В GIF больше {0} кадров, взяты первые {0}",
-                screen::MAX_FRAMES
+            RichText::new(apex5::tr!(
+                "The GIF has more than {max} frames, the first {max} are taken",
+                max = screen::MAX_FRAMES
             ))
             .size(12.5)
             .color(WARN),
@@ -951,12 +964,12 @@ fn about(ui: &mut egui::Ui, d: &mut Draft) {
     if d.source.is_some() && n > 1 {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Кадр").color(DIM));
+            ui.label(RichText::new(t("Frame")).color(DIM));
             let r = ui.add(
                 egui::DragValue::new(&mut d.interval_ms)
                     .range(screen::INTERVAL_MS.0..=screen::INTERVAL_MS.1)
                     .speed(2.0)
-                    .suffix(" мс"),
+                    .suffix(t(" ms")),
             );
             if r.changed() {
                 d.upload.set_interval(d.interval_ms);
@@ -965,7 +978,10 @@ fn about(ui: &mut egui::Ui, d: &mut Draft) {
     }
     ui.add_space(4.0);
     let minutes = (n as u32 * screen::SECONDS_PER_FRAME).div_ceil(60);
-    hint(ui, &format!("Загрузка займёт около {minutes} мин"));
+    hint(
+        ui,
+        &apex5::tr!("The upload takes about {minutes} min", minutes),
+    );
     if let Some(e) = &d.error {
         ui.label(RichText::new(e).color(BAD));
     }
@@ -1019,7 +1035,7 @@ pub fn job_page(app: &App, ui: &mut egui::Ui) {
         ui.add_space(80.0);
         ui.set_max_width(520.0);
         ui.label(
-            RichText::new("Загрузка картинки на экран")
+            RichText::new(t("Uploading the picture to the screen"))
                 .font(theme::bold(24.0))
                 .color(TEXT),
         );
@@ -1027,11 +1043,11 @@ pub fn job_page(app: &App, ui: &mut egui::Ui) {
         match &job.stage {
             None => {
                 ui.add(egui::Spinner::new().size(22.0).color(accent()));
-                ui.label(RichText::new("Проверка подключения…").color(DIM));
+                ui.label(RichText::new(t("Checking the connection…")).color(DIM));
             }
             Some(Stage::Switching) => {
                 ui.add(egui::Spinner::new().size(22.0).color(accent()));
-                ui.label(RichText::new("Экран переходит в режим загрузки…").color(DIM));
+                ui.label(RichText::new(t("The screen is switching to upload mode…")).color(DIM));
             }
             Some(Stage::Writing(done, total)) => {
                 let f = *done as f32 / (*total).max(1) as f32;
@@ -1045,38 +1061,30 @@ pub fn job_page(app: &App, ui: &mut egui::Ui) {
                 let spent = job.since.elapsed();
                 let left = if *done > 0 {
                     let rest = spent.mul_f64((*total - *done) as f64 / *done as f64);
-                    format!(", осталось около {}", clock(rest))
+                    apex5::tr!(", about {left} left", left = clock(rest))
                 } else {
                     String::new()
                 };
                 ui.label(
-                    RichText::new(format!(
-                        "{:.0} % · прошло {}{left}",
-                        f * 100.0,
-                        clock(spent)
-                    ))
+                    RichText::new(apex5::tr!("{percent}% · {spent} elapsed{left}", percent = format!("{:.0}", f * 100.0), spent = clock(spent), left))
                     .color(DIM),
                 );
             }
             Some(Stage::Saving) => {
                 ui.add(egui::Spinner::new().size(22.0).color(accent()));
                 ui.label(
-                    RichText::new(
-                        "Экран сохраняет картинку, затем геймпад перезагрузится. Около 20 секунд.",
-                    )
+                    RichText::new(t("The screen is saving the picture, then the controller restarts. About 20 seconds."))
                     .color(DIM),
                 );
             }
         }
         ui.add_space(20.0);
         ui.label(
-            RichText::new(
-                "Не отключайте кабель, не выключайте геймпад и не закрывайте приложение.",
-            )
+            RichText::new(t("Don't unplug the cable, turn the controller off or close the app."))
             .color(WARN),
         );
         ui.label(
-            RichText::new("Прерванная загрузка оставит экран без картинки, но её можно повторить.")
+            RichText::new(t("An interrupted upload leaves the screen without a picture, but it can be repeated."))
                 .size(12.5)
                 .color(FAINT),
         );

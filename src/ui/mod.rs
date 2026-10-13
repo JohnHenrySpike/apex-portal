@@ -3,6 +3,8 @@
 use std::time::{Duration, Instant};
 
 use apex5::device::{self, NICKNAME_MAX};
+use apex5::lang::{self, key, t};
+use apex5::tr;
 use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 
@@ -22,14 +24,15 @@ mod widgets;
 use theme::{BAD, BORDER, DIM, FAINT, OK, SIDEBAR, TEXT, WARN, accent};
 use widgets::{Icon, card, card_titled, page_title, row, toggle_row};
 
+/// The menu: page, icon, name.
 const NAV: [(Tab, Icon, &str); 7] = [
-    (Tab::Overview, Icon::Home, "Геймпад"),
-    (Tab::Lighting, Icon::Light, "Подсветка"),
-    (Tab::Screen, Icon::Screen, "Экран"),
-    (Tab::Profile, Icon::Profiles, "Профили"),
-    (Tab::DualSense, Icon::Waves, "Режим DualSense"),
-    (Tab::Input, Icon::Input, "Тест ввода"),
-    (Tab::Settings, Icon::Settings, "Настройки"),
+    (Tab::Overview, Icon::Home, key("Controller")),
+    (Tab::Lighting, Icon::Light, key("Lighting")),
+    (Tab::Screen, Icon::Screen, key("Screen")),
+    (Tab::Profile, Icon::Profiles, key("Profiles")),
+    (Tab::DualSense, Icon::Waves, key("DualSense mode")),
+    (Tab::Input, Icon::Input, key("Input test")),
+    (Tab::Settings, Icon::Settings, key("Settings")),
 ];
 
 /// Where a thin divider goes in the menu: after the pad's own looks, and
@@ -138,27 +141,31 @@ fn title_bar(app: &App, ui: &mut egui::Ui, refresh: bool) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                if window_button(ui, Icon::Close, "Закрыть", true).clicked() {
+                if window_button(ui, Icon::Close, t("Close"), true).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 let (icon, tip) = if max {
-                    (Icon::Restore, "Восстановить")
+                    (Icon::Restore, t("Restore"))
                 } else {
-                    (Icon::Maximize, "Развернуть")
+                    (Icon::Maximize, t("Maximize"))
                 };
                 if window_button(ui, icon, tip, false).clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
                 }
-                if window_button(ui, Icon::Minimize, "Свернуть", false).clicked() {
+                if window_button(ui, Icon::Minimize, t("Minimize"), false).clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
                 ui.add_space(14.0);
                 if refresh {
                     ui.spacing_mut().item_spacing.x = 10.0;
-                    if widgets::icon_button(ui, Icon::Refresh, "Перечитать всё с геймпада")
-                        .clicked()
+                    if widgets::icon_button(
+                        ui,
+                        Icon::Refresh,
+                        t("Read everything from the controller again"),
+                    )
+                    .clicked()
                     {
                         app.send(Cmd::Refresh);
                     }
@@ -284,27 +291,27 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
             device_badge(app, ui);
             ui.add_space(14.0);
 
-            for (tab, icon, label) in NAV {
+            for (tab, icon, name) in NAV {
                 if NAV_BREAKS.contains(&tab) {
                     ui.add_space(3.0);
                     widgets::separator(ui);
                     ui.add_space(5.0);
                 }
-                nav_item(app, ui, tab, icon, label);
+                nav_item(app, ui, tab, icon, t(name));
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
                     widgets::icon(ui.painter(), rect, Icon::Shield, FAINT);
-                    ui.label(RichText::new("Защищённый режим").size(12.0).color(FAINT));
+                    ui.label(RichText::new(t("Protected mode")).size(12.0).color(FAINT));
                 })
                 .response
-                .on_hover_text(
-                    "Опасные команды заблокированы: приложение не отправляет команды прошивки, \
-                     сброса к заводским, смены режима и типа устройства. Каждый пакет \
-                     проверяется по белому списку.",
-                );
+                .on_hover_text(t(
+                    "Dangerous commands are blocked: the app never sends firmware, factory \
+                     reset, mode change or device type commands. Every packet is checked \
+                     against an allowlist.",
+                ));
             });
         });
 }
@@ -323,12 +330,16 @@ fn device_badge(app: &mut App, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     status_dot(ui, BAD);
                     ui.label(
-                        RichText::new("Не подключён")
+                        RichText::new(t("Not connected"))
                             .font(theme::medium(14.0))
                             .color(TEXT),
                     );
                 });
-                ui.label(RichText::new("ожидание геймпада…").size(12.5).color(DIM));
+                ui.label(
+                    RichText::new(t("waiting for the controller…"))
+                        .size(12.5)
+                        .color(DIM),
+                );
                 return;
             };
             ui.horizontal(|ui| {
@@ -345,25 +356,21 @@ fn device_badge(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(RichText::new(b).size(12.5).color(DIM));
                 ui.label(RichText::new("·").color(FAINT));
                 ui.label(
-                    RichText::new(if i.wired {
-                        "кабель"
-                    } else {
-                        "донгл"
-                    })
-                    .size(12.5)
-                    .color(DIM),
+                    RichText::new(if i.wired { t("cable") } else { t("dongle") })
+                        .size(12.5)
+                        .color(DIM),
                 );
             });
             ui.add_space(6.0);
             profile_switch(app, ui);
             if let Some(p) = &app.pad_profile {
-                let t = profile::shown_title(&p.title());
+                let shown = profile::shown_title(&p.title());
                 ui.add(
                     egui::Label::new(
-                        RichText::new(if t.is_empty() {
-                            "без названия".into()
+                        RichText::new(if shown.is_empty() {
+                            t("untitled").into()
                         } else {
-                            t
+                            shown
                         })
                         .size(12.5)
                         .color(DIM),
@@ -383,7 +390,7 @@ fn profile_switch(app: &mut App, ui: &mut egui::Ui) {
         for slot in 0..apex5::profile::SLOTS {
             let active = slot == app.active;
             let (rect, r) = ui.allocate_exact_size(vec2(w, 30.0), egui::Sense::click());
-            let t = ui.ctx().animate_bool_responsive(r.id, active);
+            let on = ui.ctx().animate_bool_responsive(r.id, active);
             let bg = if r.hovered() && !active {
                 theme::HOVER
             } else {
@@ -392,8 +399,8 @@ fn profile_switch(app: &mut App, ui: &mut egui::Ui) {
             ui.painter().rect(
                 rect,
                 CornerRadius::same(8),
-                widgets::lerp_colour(bg, accent(), t),
-                Stroke::new(1.0, widgets::lerp_colour(BORDER, accent(), t)),
+                widgets::lerp_colour(bg, accent(), on),
+                Stroke::new(1.0, widgets::lerp_colour(BORDER, accent(), on)),
                 egui::StrokeKind::Inside,
             );
             ui.painter().text(
@@ -404,9 +411,9 @@ fn profile_switch(app: &mut App, ui: &mut egui::Ui) {
                 if active { theme::on_accent() } else { DIM },
             );
             let r = r.on_hover_text(if active {
-                "Активный профиль"
+                t("Active profile")
             } else {
-                "Переключить геймпад на этот профиль"
+                t("Switch the controller to this profile")
             });
             if r.clicked() && !active && !app.busy {
                 switch_profile(app, slot);
@@ -425,16 +432,16 @@ fn status_dot(ui: &mut egui::Ui, c: Color32) {
 fn nav_item(app: &mut App, ui: &mut egui::Ui, tab: Tab, icon: Icon, label: &str) {
     let sel = app.tab == tab;
     let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), egui::Sense::click());
-    let t = ui.ctx().animate_bool_responsive(r.id, sel);
+    let on = ui.ctx().animate_bool_responsive(r.id, sel);
     let p = ui.painter();
     if sel || r.hovered() {
         let bg = if sel { theme::CARD_HI } else { theme::CARD };
         p.rect_filled(rect, CornerRadius::same(10), bg);
     }
-    if t > 0.0 {
+    if on > 0.0 {
         let bar = egui::Rect::from_min_size(
-            pos2(rect.left(), rect.center().y - 10.0 * t),
-            vec2(3.0, 20.0 * t),
+            pos2(rect.left(), rect.center().y - 10.0 * on),
+            vec2(3.0, 20.0 * on),
         );
         p.rect_filled(bar, CornerRadius::same(2), accent());
     }
@@ -458,7 +465,7 @@ fn nav_item(app: &mut App, ui: &mut egui::Ui, tab: Tab, icon: Icon, label: &str)
     if tab == Tab::Profile && (app.profile_dirty() || app.flash_dirty) {
         p.circle_filled(pos2(rect.right() - 16.0, rect.center().y), 4.0, WARN);
         r.clone()
-            .on_hover_text("Есть несохранённые изменения профиля");
+            .on_hover_text(t("The profile has unsaved changes"));
     }
     if r.clicked() {
         app.tab = tab;
@@ -535,23 +542,25 @@ fn disconnected(app: &mut App, ui: &mut egui::Ui) {
         );
         ui.add_space(8.0);
         ui.label(
-            RichText::new("Геймпад не найден")
+            RichText::new(t("Controller not found"))
                 .font(theme::bold(24.0))
                 .color(TEXT),
         );
         ui.add_space(4.0);
         ui.label(
-            RichText::new(
-                "Подключите Apex 5 кабелем или через донгл — приложение найдёт его само.",
-            )
+            RichText::new(t(
+                "Connect the Apex 5 by cable or through the dongle — the app will find it.",
+            ))
             .color(DIM),
         );
         ui.label(RichText::new(&app.status).size(12.5).color(FAINT));
         ui.add_space(4.0);
         ui.label(
-            RichText::new("Если геймпад подключён, но нет доступа, установите правило udev.")
-                .size(12.5)
-                .color(FAINT),
+            RichText::new(t(
+                "If the controller is connected but there is no access, install the udev rule.",
+            ))
+            .size(12.5)
+            .color(FAINT),
         );
         if app.status.contains("udev") {
             ui.add_space(8.0);
@@ -562,6 +571,8 @@ fn disconnected(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.add_space(12.0);
         ui.add(egui::Spinner::new().size(22.0).color(accent()));
+        ui.add_space(20.0);
+        language_menu(ui);
     });
 }
 
@@ -573,7 +584,7 @@ fn overview(app: &mut App, ui: &mut egui::Ui) {
         app,
         ui,
         &format!("Flydigi {}", info.model()),
-        "Состояние геймпада и быстрые действия",
+        t("Controller state and quick actions"),
     );
 
     let wide = ui.available_width() > 860.0;
@@ -620,36 +631,37 @@ fn overview(app: &mut App, ui: &mut egui::Ui) {
 
 /// Model, firmware, the stored name and Flydigi's firmware news.
 fn about(app: &mut App, ui: &mut egui::Ui, info: &device::Info) {
-    card_titled(ui, "Об устройстве", |ui| {
+    card_titled(ui, t("About the device"), |ui| {
         egui::Grid::new("about")
             .num_columns(2)
             .spacing([28.0, 6.0])
             .show(ui, |ui| {
-                ui.label(RichText::new("Модель").color(DIM));
-                ui.label(format!(
-                    "Flydigi {} (тип {})",
-                    info.model(),
-                    info.device_type
+                ui.label(RichText::new(t("Model")).color(DIM));
+                ui.label(tr!(
+                    "Flydigi {model} (type {kind})",
+                    model = info.model(),
+                    kind = info.device_type
                 ));
                 ui.end_row();
                 ui.label(RichText::new("UID").color(DIM));
                 ui.monospace(&info.uid);
                 ui.end_row();
                 for (name, v) in &info.firmware {
-                    ui.label(RichText::new(format!("Прошивка: {name}")).color(DIM));
+                    ui.label(RichText::new(tr!("Firmware: {name}", name)).color(DIM));
                     ui.monospace(v);
                     ui.end_row();
                 }
-                ui.label(RichText::new("Имя").color(DIM)).on_hover_text(
-                    "Служебное имя, которое геймпад хранит в себе. Его показывают Flydigi Space \
-                     Station и другие программы, чтобы различать несколько геймпадов. На экране \
-                     геймпада и в играх оно не отображается.",
-                );
+                ui.label(RichText::new(t("Name")).color(DIM))
+                    .on_hover_text(t(
+                        "A service name the controller keeps in itself. Flydigi Space Station \
+                         and other programs show it to tell several controllers apart. It is not \
+                         shown on the controller's screen or in games.",
+                    ));
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut app.nickname)
                             .desired_width(200.0)
-                            .hint_text("без имени")
+                            .hint_text(t("no name"))
                             .margin(vec2(10.0, 5.0)),
                     );
                     let n = app.nickname.len();
@@ -659,7 +671,7 @@ fn about(app: &mut App, ui: &mut egui::Ui, info: &device::Info) {
                             .color(FAINT),
                     );
                     let ok = n > 0 && n <= NICKNAME_MAX && app.nickname != info.nickname;
-                    if ok && widgets::secondary(ui, "Сохранить", true).clicked() {
+                    if ok && widgets::secondary(ui, t("Save"), true).clicked() {
                         app.send(Cmd::SetNickname(app.nickname.clone()));
                     }
                 });
@@ -675,7 +687,7 @@ fn about(app: &mut App, ui: &mut egui::Ui, info: &device::Info) {
 pub fn switch_profile(app: &mut App, slot: u8) {
     if app.profile_dirty() {
         app.toast = Some((
-            "Сначала примените или отмените изменения профиля".into(),
+            t("Apply or revert the profile changes first").into(),
             true,
             std::time::Instant::now(),
         ));
@@ -689,9 +701,9 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
         let title = p.title();
         // a factory title only repeats the slot
         let caption = if title.is_empty() || profile::shown_title(&title) != title {
-            format!("Профиль P{}", app.active + 1)
+            tr!("Profile P{slot}", slot = app.active + 1)
         } else {
-            format!("Профиль P{} · {title}", app.active + 1)
+            tr!("Profile P{slot} · {title}", slot = app.active + 1, title)
         };
         card_titled(ui, &caption, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -705,7 +717,7 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.add_space(12.0);
     }
-    card_titled(ui, "Подсветка", |ui| {
+    card_titled(ui, t("Lighting"), |ui| {
         if let Some(led) = app.led.as_mut() {
             ui.horizontal(|ui| {
                 ui.label(
@@ -724,7 +736,7 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Яркость").color(DIM));
+                ui.label(RichText::new(t("Brightness")).color(DIM));
                 let mut b = led.cfg.brightness();
                 ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(80.0);
                 if ui
@@ -737,18 +749,20 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
             });
         }
         ui.horizontal(|ui| {
-            if ui.link("Настроить подсветку →").clicked() {
+            if ui.link(t("Set up lighting →")).clicked() {
                 app.tab = Tab::Lighting;
             }
             if app.led_dirty() {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::secondary(ui, "Сохранить", !app.busy)
-                        .on_hover_text("Без сохранения подсветка сбросится, когда геймпад уснёт")
+                    if widgets::secondary(ui, t("Save"), !app.busy)
+                        .on_hover_text(t(
+                            "Unsaved lighting is lost when the controller goes to sleep",
+                        ))
                         .clicked()
                     {
                         app.save_led();
                     }
-                    ui.label(RichText::new("не сохранена").size(12.5).color(WARN));
+                    ui.label(RichText::new(t("not saved")).size(12.5).color(WARN));
                 });
             }
         });
@@ -760,36 +774,42 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
 /// Switches of the pad: feature number, name, hint.
 type Feature = (u8, &'static str, &'static str);
 
-const BUTTON_FEATURES: [Feature; 2] = [
-    (
-        1,
-        "Быстрая смена профиля",
-        "Fn + A/B/X/Y переключает профиль прямо с геймпада",
-    ),
-    (
-        4,
-        "Кнопка Turbo",
-        "Turbo + кнопка включает турбо на геймпаде. Турбо из профиля работает и без неё",
-    ),
-];
+fn button_features() -> [Feature; 2] {
+    [
+        (
+            1,
+            t("Quick profile switch"),
+            t("Fn + A/B/X/Y switches the profile right on the controller"),
+        ),
+        (
+            4,
+            t("Turbo button"),
+            t(
+                "Turbo + a button turns turbo on from the controller. Turbo from the profile works without it",
+            ),
+        ),
+    ]
+}
 
-const STICK_FEATURES: [Feature; 3] = [
-    (
-        5,
-        "Фильтр дребезга",
-        "Сглаживает дрожание; без него не работает автокалибровка",
-    ),
-    (
-        6,
-        "Автокалибровка",
-        "Подстраивает центр стиков во время игры",
-    ),
-    (
-        7,
-        "Фильтр отскока",
-        "Гасит обратный выброс при резком отпускании стика",
-    ),
-];
+fn stick_features() -> [Feature; 3] {
+    [
+        (
+            5,
+            t("Jitter filter"),
+            t("Smooths out jitter; auto calibration does not work without it"),
+        ),
+        (
+            6,
+            t("Auto calibration"),
+            t("Adjusts the sticks' centre during play"),
+        ),
+        (
+            7,
+            t("Rebound filter"),
+            t("Damps the overshoot when a stick is released sharply"),
+        ),
+    ]
+}
 
 /// The supported switches of a list, with dividers between them.
 fn features(app: &App, ui: &mut egui::Ui, s: &device::Settings, list: &[Feature]) {
@@ -816,28 +836,68 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
     header(
         app,
         ui,
-        "Настройки",
-        "Применяются сразу и хранятся в самом геймпаде",
+        t("Settings"),
+        t("Applied at once and kept in the controller itself"),
     );
+    pad_settings(app, ui);
+    ui.add_space(12.0);
+    app_settings(ui);
+}
+
+/// What this app keeps on the computer.
+fn app_settings(ui: &mut egui::Ui) {
+    card_titled(ui, t("App"), |ui| {
+        // findable in English too, should a language be picked by mistake
+        let title = if lang::current() == lang::ENGLISH {
+            "Language".to_string()
+        } else {
+            format!("{} · Language", t("Language"))
+        };
+        row(ui, &title, "", language_menu);
+    });
+}
+
+/// The languages by their own names.
+fn language_menu(ui: &mut egui::Ui) {
+    let now = lang::current();
+    let languages = lang::languages();
+    let name = languages
+        .iter()
+        .find(|(c, _)| *c == now)
+        .map_or(now, |(_, n)| n);
+    egui::ComboBox::from_id_salt("lang")
+        .selected_text(name)
+        .width(200.0)
+        .show_ui(ui, |ui| {
+            for (code, name) in languages {
+                if ui.selectable_label(code == now, name).clicked() && code != now {
+                    lang::pick(code);
+                }
+            }
+        });
+}
+
+/// The pad's own settings and the reset.
+fn pad_settings(app: &mut App, ui: &mut egui::Ui) {
     let Some(s) = app.settings.clone() else {
         ui.add(egui::Spinner::new().color(accent()));
         return;
     };
 
-    card_titled(ui, "Кнопки", |ui| {
-        features(app, ui, &s, &BUTTON_FEATURES)
+    card_titled(ui, t("Buttons"), |ui| {
+        features(app, ui, &s, &button_features())
     });
 
     ui.add_space(12.0);
-    card_titled(ui, "Стики", |ui| {
-        features(app, ui, &s, &STICK_FEATURES);
+    card_titled(ui, t("Sticks"), |ui| {
+        features(app, ui, &s, &stick_features());
         widgets::separator(ui);
         row(
             ui,
-            "Точность",
-            "Разрешение обычного (Xbox) ввода. Flydigi предлагает 8–12 бит",
+            t("Precision"),
+            t("Resolution of the regular (Xbox) input. Flydigi offers 8–12 bits"),
             |ui| {
-                combo(ui, "prec", s.precision, &device::PRECISION, |v| {
+                combo(ui, "prec", s.precision, &device::precision(), |v| {
                     app.send(Cmd::SetNumber(21, v))
                 });
             },
@@ -845,10 +905,10 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
         widgets::separator(ui);
         row(
             ui,
-            "Чувствительность центра",
-            "Насколько рано стик реагирует на отклонение",
+            t("Centre sensitivity"),
+            t("How early a stick responds to a tilt"),
             |ui| {
-                combo(ui, "sens", s.sensitivity, &device::SENSITIVITY, |v| {
+                combo(ui, "sens", s.sensitivity, &device::sensitivity(), |v| {
                     app.send(Cmd::SetNumber(22, v))
                 });
             },
@@ -856,15 +916,15 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.add_space(12.0);
-    card_titled(ui, "Питание", |ui| {
+    card_titled(ui, t("Power"), |ui| {
         row(
             ui,
-            "Автоотключение",
-            "Через сколько минут бездействия геймпад засыпает",
+            t("Auto sleep"),
+            t("After how many idle minutes the controller goes to sleep"),
             |ui| {
                 // a value set elsewhere stays pickable alongside the presets
-                let custom = format!("{} мин", s.sleep_minutes);
-                let mut items = device::SLEEP.to_vec();
+                let custom = tr!("{minutes} min", minutes = s.sleep_minutes);
+                let mut items = device::sleep();
                 if !items.iter().any(|(v, _)| *v == s.sleep_minutes) {
                     items.push((s.sleep_minutes, &custom));
                 }
@@ -880,30 +940,27 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
         && let Some(f) = app.flags.clone()
     {
         ui.add_space(12.0);
-        card_titled(ui, "Сторонние программы", |ui| {
+        card_titled(ui, t("Third-party programs"), |ui| {
             let mut on = f.third_party;
             let r = ui.scope(|ui| {
                 toggle_row(
                     ui,
-                    "Разрешить перехват раскладки",
-                    "Steam и другие программы на SDL смогут захватывать геймпад",
+                    t("Allow layout takeover"),
+                    t("Steam and other SDL programs can take over the controller"),
                     &mut on,
                 )
             });
-            r.response.on_hover_text(
-                "Пока программа держит геймпад, профиль не действует, а обычный ввод (xpad) \
-                 пропадает: игры видят геймпад только через эту программу.",
-            );
+            r.response.on_hover_text(t(
+                "While a program holds the controller, the profile does not apply and the \
+                 regular input (xpad) is gone: games see the controller only through that program.",
+            ));
             if r.inner {
                 app.send(Cmd::SetThirdParty(on));
             }
             if !f.control_by.is_empty() {
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(format!(
-                        "Сейчас геймпад захвачен: {}. Профиль не действует, обычный ввод выключен.",
-                        f.control_by
-                    ))
+                    RichText::new(tr!("The controller is taken over by {program}. The profile does not apply, regular input is off.", program = f.control_by))
                     .color(WARN),
                 );
             }
@@ -917,17 +974,17 @@ fn settings(app: &mut App, ui: &mut egui::Ui) {
 /// Factory profiles in all four slots, confirmed by a second press.
 fn reset_card(app: &mut App, ui: &mut egui::Ui) {
     const WAIT: Duration = Duration::from_secs(5);
-    card_titled(ui, "Сброс", |ui| {
+    card_titled(ui, t("Reset"), |ui| {
         let armed = app.reset_armed.is_some_and(|t| t.elapsed() < WAIT);
         row(
             ui,
-            "Все профили к заводским",
-            "Кнопки, макросы, стики, курки, вибрация, гироскоп и названия всех четырёх профилей",
+            t("All profiles to factory"),
+            t("Buttons, macros, sticks, triggers, vibration, gyro and names of all four profiles"),
             |ui| {
                 let text = if armed {
-                    "Точно сбросить?"
+                    t("Really reset?")
                 } else {
-                    "Сбросить…"
+                    t("Reset…")
                 };
                 if widgets::secondary(ui, text, !app.busy).clicked() {
                     if armed {
@@ -939,13 +996,13 @@ fn reset_card(app: &mut App, ui: &mut egui::Ui) {
                 }
                 if armed {
                     ui.ctx().request_repaint_after(Duration::from_millis(250));
-                    if ui.button("Отмена").clicked() {
+                    if ui.button(t("Cancel")).clicked() {
                         app.reset_armed = None;
                     }
                 }
             },
         );
-        ui.checkbox(&mut app.reset_lighting, "И подсветку тоже");
+        ui.checkbox(&mut app.reset_lighting, t("Lighting too"));
     });
 }
 

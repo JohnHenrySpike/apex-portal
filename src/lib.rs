@@ -7,6 +7,7 @@ pub mod device;
 pub mod ds5;
 pub mod evdev;
 pub mod hid;
+pub mod lang;
 pub mod library;
 pub mod lighting;
 pub mod profile;

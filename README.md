@@ -20,6 +20,11 @@
 
 Также есть консольная утилита `apex5ctl`: `info`, `input [секунды]`, `keys [секунды]` (кнопки на выходе xpad, работает рядом с приложением), `led show|slots|color|brightness|save`, `profile switch N|backup`, `screen preview|upload` (картинка на экран), `ds5` (режим DualSense без окна, до Ctrl-C), `cloud firmware|games|pictures` (что есть на сервере Flydigi). Сохранённые профили лежат в `~/.config/apex5-control/profiles/`.
 
+Язык интерфейса — английский по умолчанию, русский выбирается в «Settings → App → Language»
+(или на экране «Controller not found»). Выбор хранится в `~/.config/apex5-control/language`;
+переменная `APEX5_LANG=ru` задаёт язык на один запуск. Консольная утилита всегда на английском.
+Переводы лежат в `locales/*.json`; как добавить свой язык — в [locales/README.md](locales/README.md).
+
 ## Безопасность
 
 Каждый исходящий пакет проверяет модуль `src/safety.rs` по белому списку. **Никогда не отправляются:**
@@ -111,6 +116,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 - `src/worker.rs` — фоновый поток, которому принадлежит устройство.
 - `src/bridge.rs`, `src/ds5.rs`, `src/uhid.rs` — режим DualSense: виртуальный геймпад, его отчёты, перевод эффектов курков.
 - `src/main.rs`, `src/ui/` — интерфейс.
+- `src/lang.rs`, `locales/`, `tools/i18n.py` — языки интерфейса: английский в коде, переводы в JSON.
 - `assets/apex5.svg` — рисунок геймпада для интерфейса, собирается скриптами из `tools/svg` (см. `tools/svg/README.md`).
 - `docs/spec-*.md` — спецификация протокола.
 
