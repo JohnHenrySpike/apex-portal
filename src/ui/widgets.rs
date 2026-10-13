@@ -6,12 +6,12 @@ use eframe::egui::{
     vec2,
 };
 
-use super::theme::{self, BORDER, CARD, CARD_HI, DIM, FAINT, HOVER, TEXT, accent, on_accent};
+use super::theme::{self, accent, on_accent};
 
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(theme::card())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(14))
         .inner_margin(egui::Margin::same(18))
         .show(ui, |ui| {
@@ -37,17 +37,25 @@ pub fn caption(ui: &mut Ui, text: &str) {
         .chars()
         .flat_map(|c| [c, '\u{200A}'])
         .collect();
-    ui.label(RichText::new(spaced).font(theme::medium(11.5)).color(DIM));
+    ui.label(
+        RichText::new(spaced)
+            .font(theme::medium(11.5))
+            .color(theme::dim()),
+    );
 }
 
 pub fn hint(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).size(12.5).color(DIM));
+    ui.label(RichText::new(text).size(12.5).color(theme::dim()));
 }
 
 pub fn page_title(ui: &mut Ui, title: &str, subtitle: &str) {
-    ui.label(RichText::new(title).font(theme::bold(26.0)).color(TEXT));
+    ui.label(
+        RichText::new(title)
+            .font(theme::bold(26.0))
+            .color(theme::text()),
+    );
     if !subtitle.is_empty() {
-        ui.label(RichText::new(subtitle).color(DIM));
+        ui.label(RichText::new(subtitle).color(theme::dim()));
     }
 }
 
@@ -61,21 +69,25 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     }
     if ui.is_rect_visible(rect) {
         let t = ui.ctx().animate_bool_responsive(r.id, *on);
-        let off_bg = if r.hovered() { HOVER } else { CARD_HI };
+        let off_bg = if r.hovered() {
+            theme::hover()
+        } else {
+            theme::card_hi()
+        };
         let bg = lerp_colour(off_bg, accent(), t);
         let p = ui.painter();
         p.rect(
             rect,
             CornerRadius::same(12),
             bg,
-            Stroke::new(1.0, lerp_colour(BORDER, accent(), t)),
+            Stroke::new(1.0, lerp_colour(theme::border(), accent(), t)),
             StrokeKind::Inside,
         );
         let x = egui::lerp(rect.left() + 12.0..=rect.right() - 12.0, t);
         p.circle_filled(
             pos2(x, rect.center().y),
             8.5,
-            if *on { on_accent() } else { DIM },
+            if *on { on_accent() } else { theme::dim() },
         );
     }
     r
@@ -98,11 +110,18 @@ pub fn row<R>(ui: &mut Ui, title: &str, hint_text: &str, control: impl FnOnce(&m
                 ui.set_width(tw);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add(
-                    egui::Label::new(RichText::new(title).font(theme::medium(14.5)).color(TEXT))
-                        .wrap(),
+                    egui::Label::new(
+                        RichText::new(title)
+                            .font(theme::medium(14.5))
+                            .color(theme::text()),
+                    )
+                    .wrap(),
                 );
                 if !hint_text.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(hint_text).size(12.5).color(DIM)).wrap());
+                    ui.add(
+                        egui::Label::new(RichText::new(hint_text).size(12.5).color(theme::dim()))
+                            .wrap(),
+                    );
                 }
             },
         );
@@ -124,15 +143,15 @@ pub fn toggle_row(ui: &mut Ui, title: &str, hint_text: &str, on: &mut bool) -> b
 
 pub fn separator(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, BORDER);
+    ui.painter().rect_filled(rect, 0.0, theme::border());
 }
 
 /// Row of mutually exclusive options. Returns true when the value changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &str)]) -> bool {
     let mut changed = false;
     egui::Frame::new()
-        .fill(egui::Color32::from_rgb(13, 15, 19))
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(theme::well())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::same(3))
         .show(ui, |ui| {
@@ -141,14 +160,16 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
                 for (v, label) in items {
                     let sel = *value == *v;
                     let font = theme::medium(13.5);
-                    let galley = ui.painter().layout_no_wrap(label.to_string(), font, TEXT);
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(label.to_string(), font, theme::text());
                     let size = vec2(galley.size().x + 26.0, 28.0);
                     let (rect, r) = ui.allocate_exact_size(size, Sense::click());
                     let t = ui.ctx().animate_bool_responsive(r.id, sel);
                     let bg = if sel {
                         accent().gamma_multiply(0.25 + 0.75 * t)
                     } else if r.hovered() {
-                        HOVER
+                        theme::hover()
                     } else {
                         Color32::TRANSPARENT
                     };
@@ -156,9 +177,9 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, items: &[(T, &
                     let colour = if sel {
                         on_accent()
                     } else if r.hovered() {
-                        TEXT
+                        theme::text()
                     } else {
-                        DIM
+                        theme::dim()
                     };
                     ui.painter()
                         .galley(rect.center() - galley.size() / 2.0, galley, colour);
@@ -184,11 +205,15 @@ pub fn slider<Num: egui::emath::Numeric>(
 
 /// Accent-filled call-to-action.
 pub fn primary(ui: &mut Ui, text: &str, enabled: bool) -> Response {
-    let b = egui::Button::new(RichText::new(text).color(if enabled { on_accent() } else { FAINT }))
-        .fill(if enabled { accent() } else { CARD_HI })
-        .stroke(Stroke::NONE)
-        .corner_radius(CornerRadius::same(10))
-        .min_size(vec2(0.0, 34.0));
+    let b = egui::Button::new(RichText::new(text).color(if enabled {
+        on_accent()
+    } else {
+        theme::faint()
+    }))
+    .fill(if enabled { accent() } else { theme::card_hi() })
+    .stroke(Stroke::NONE)
+    .corner_radius(CornerRadius::same(10))
+    .min_size(vec2(0.0, 34.0));
     ui.add_enabled(enabled, b)
 }
 
@@ -212,8 +237,8 @@ pub fn save_bar(
     egui::Panel::bottom(id.to_owned())
         .frame(
             egui::Frame::new()
-                .fill(theme::SIDEBAR)
-                .stroke(Stroke::new(1.0, BORDER))
+                .fill(theme::sidebar())
+                .stroke(Stroke::new(1.0, theme::border()))
                 .inner_margin(egui::Margin::symmetric(28, 12)),
         )
         .show(ui, |ui| {
@@ -222,8 +247,12 @@ pub fn save_bar(
                 ui.painter().circle_filled(rect.center(), 4.0, dot);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label(RichText::new(title).font(theme::medium(14.0)).color(TEXT));
-                    ui.label(RichText::new(sub).size(12.0).color(DIM));
+                    ui.label(
+                        RichText::new(title)
+                            .font(theme::medium(14.0))
+                            .color(theme::text()),
+                    );
+                    ui.label(RichText::new(sub).size(12.0).color(theme::dim()));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), buttons);
             });
@@ -236,7 +265,7 @@ pub fn link_row(ui: &mut Ui, name: &str, value: &str, value_colour: Color32) -> 
     let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     let p = ui.painter();
     if r.hovered() {
-        p.rect_filled(rect, CornerRadius::same(8), CARD_HI);
+        p.rect_filled(rect, CornerRadius::same(8), theme::card_hi());
     }
     let y = rect.center().y;
     p.text(
@@ -244,10 +273,14 @@ pub fn link_row(ui: &mut Ui, name: &str, value: &str, value_colour: Color32) -> 
         egui::Align2::LEFT_CENTER,
         name,
         egui::FontId::proportional(13.5),
-        DIM,
+        theme::dim(),
     );
     let chevron = rect.right() - 12.0;
-    let c = if r.hovered() { TEXT } else { FAINT };
+    let c = if r.hovered() {
+        theme::text()
+    } else {
+        theme::faint()
+    };
     p.line_segment(
         [pos2(chevron - 4.0, y - 4.0), pos2(chevron, y)],
         Stroke::new(1.5, c),
@@ -258,7 +291,11 @@ pub fn link_row(ui: &mut Ui, name: &str, value: &str, value_colour: Color32) -> 
     );
     // the value gives way to the name, cut short if it must
     let name_w = p
-        .layout_no_wrap(name.to_owned(), egui::FontId::proportional(13.5), DIM)
+        .layout_no_wrap(
+            name.to_owned(),
+            egui::FontId::proportional(13.5),
+            theme::dim(),
+        )
         .size()
         .x;
     let room = (chevron - 14.0 - (rect.left() + 10.0 + name_w + 16.0)).max(20.0);
@@ -280,7 +317,9 @@ pub fn link_row(ui: &mut Ui, name: &str, value: &str, value_colour: Color32) -> 
 /// Small rounded tag with an optional status dot.
 pub fn pill(ui: &mut Ui, text: &str, dot: Option<Color32>) -> Response {
     let font = theme::medium(12.5);
-    let galley = ui.painter().layout_no_wrap(text.to_string(), font, TEXT);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font, theme::text());
     let extra = if dot.is_some() { 16.0 } else { 0.0 };
     let (rect, r) =
         ui.allocate_exact_size(vec2(galley.size().x + 22.0 + extra, 26.0), Sense::hover());
@@ -288,8 +327,8 @@ pub fn pill(ui: &mut Ui, text: &str, dot: Option<Color32>) -> Response {
     p.rect(
         rect,
         CornerRadius::same(13),
-        CARD_HI,
-        Stroke::new(1.0, BORDER),
+        theme::card_hi(),
+        Stroke::new(1.0, theme::border()),
         StrokeKind::Inside,
     );
     let mut x = rect.left() + 11.0;
@@ -301,7 +340,7 @@ pub fn pill(ui: &mut Ui, text: &str, dot: Option<Color32>) -> Response {
     p.galley(
         pos2(x, rect.center().y - galley.size().y / 2.0),
         galley,
-        TEXT,
+        theme::text(),
     );
     r
 }
@@ -312,9 +351,9 @@ pub fn tile(ui: &mut Ui, size: egui::Vec2, selected: bool, title: &str, sub: &st
     let t = ui.ctx().animate_bool_responsive(r.id, selected);
     let p = ui.painter();
     let bg = if r.hovered() && !selected {
-        HOVER
+        theme::hover()
     } else {
-        CARD_HI
+        theme::card_hi()
     };
     p.rect(
         rect,
@@ -322,21 +361,21 @@ pub fn tile(ui: &mut Ui, size: egui::Vec2, selected: bool, title: &str, sub: &st
         lerp_colour(bg, accent().gamma_multiply(0.16), t),
         Stroke::new(
             if selected { 1.5 } else { 1.0 },
-            lerp_colour(BORDER, accent(), t),
+            lerp_colour(theme::border(), accent(), t),
         ),
         StrokeKind::Inside,
     );
     let tg = p.layout(
         title.to_string(),
         theme::medium(14.5),
-        TEXT,
+        theme::text(),
         rect.width() - 24.0,
     );
     let th = tg.size().y;
     let sg = p.layout(
         sub.to_string(),
         egui::FontId::proportional(12.0),
-        DIM,
+        theme::dim(),
         rect.width() - 24.0,
     );
     let total = th
@@ -346,16 +385,43 @@ pub fn tile(ui: &mut Ui, size: egui::Vec2, selected: bool, title: &str, sub: &st
             sg.size().y + 3.0
         };
     let top = rect.center().y - total / 2.0;
-    p.galley(pos2(rect.left() + 12.0, top), tg, TEXT);
+    p.galley(pos2(rect.left() + 12.0, top), tg, theme::text());
     if !sub.is_empty() {
-        p.galley(pos2(rect.left() + 12.0, top + th + 3.0), sg, DIM);
+        p.galley(pos2(rect.left() + 12.0, top + th + 3.0), sg, theme::dim());
     }
     r
 }
 
+/// One LED of a preview bar: its colour scaled by `k` (brightness) shows as
+/// that much light over an unlit LED, so dim LEDs fade instead of going black
+/// on a light theme.
+pub fn led(p: &egui::Painter, r: Rect, corner: u8, c: [u8; 3], k: f32) {
+    let pal = theme::palette();
+    let c = c.map(|v| v as f32 * k);
+    let m = c[0].max(c[1]).max(c[2]);
+    p.rect_filled(r, CornerRadius::same(corner), pal.led_off);
+    if m < 1.0 {
+        return;
+    }
+    let lit = Color32::from_rgba_unmultiplied(
+        (c[0] * 255.0 / m) as u8,
+        (c[1] * 255.0 / m) as u8,
+        (c[2] * 255.0 / m) as u8,
+        m as u8,
+    );
+    p.rect(
+        r,
+        CornerRadius::same(corner),
+        lit,
+        Stroke::new(1.0, pal.led_rim.gamma_multiply(m / 255.0)),
+        StrokeKind::Inside,
+    );
+}
+
+/// Mixes in premultiplied space, so a see-through colour stays as see-through.
 pub fn lerp_colour(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgba_unmultiplied(
+    Color32::from_rgba_premultiplied(
         l(a.r(), b.r()),
         l(a.g(), b.g()),
         l(a.b(), b.b()),
@@ -550,19 +616,27 @@ pub fn icon(p: &egui::Painter, rect: Rect, which: Icon, colour: Color32) {
 /// Square icon button without a frame.
 pub fn icon_button(ui: &mut Ui, which: Icon, tip: &str) -> Response {
     let (rect, r) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
-    let bg = if r.hovered() { HOVER } else { CARD_HI };
+    let bg = if r.hovered() {
+        theme::hover()
+    } else {
+        theme::card_hi()
+    };
     ui.painter().rect(
         rect,
         CornerRadius::same(10),
         bg,
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0, theme::border()),
         StrokeKind::Inside,
     );
     icon(
         ui.painter(),
         rect.shrink(9.0),
         which,
-        if r.hovered() { TEXT } else { DIM },
+        if r.hovered() {
+            theme::text()
+        } else {
+            theme::dim()
+        },
     );
     r.on_hover_text(tip)
 }
@@ -575,7 +649,7 @@ pub fn battery(ui: &mut Ui, level: u8, charging: bool) {
     p.rect_stroke(
         body,
         CornerRadius::same(4),
-        Stroke::new(1.3, DIM),
+        Stroke::new(1.3, theme::dim()),
         StrokeKind::Inside,
     );
     p.rect_filled(
@@ -584,16 +658,16 @@ pub fn battery(ui: &mut Ui, level: u8, charging: bool) {
             pos2(rect.right(), rect.bottom() - 5.0),
         ),
         CornerRadius::same(1),
-        DIM,
+        theme::dim(),
     );
     let inner = body.shrink(3.0);
     let frac = level.min(5) as f32 / 5.0;
     let colour = if level <= 1 {
-        theme::BAD
+        theme::bad()
     } else if charging {
         accent()
     } else {
-        theme::OK
+        theme::ok()
     };
     p.rect_filled(
         Rect::from_min_max(

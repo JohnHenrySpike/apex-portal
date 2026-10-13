@@ -404,6 +404,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ui::theme::sync(ctx);
         while let Ok(ev) = self.h.rx.try_recv() {
             self.on_event(ev);
         }

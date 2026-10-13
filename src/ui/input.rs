@@ -9,7 +9,7 @@ use apex5::tester::{self, Gate, SECTORS};
 use apex5::worker::Cmd;
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, pos2, vec2};
 
-use super::theme::{self, CARD_HI, DIM, FAINT, TEXT, accent};
+use super::theme::{self, accent};
 use super::widgets::{self, card, card_titled, hint};
 use super::{header, pad};
 use crate::App;
@@ -69,7 +69,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.add(egui::Spinner::new().color(accent()));
                 ui.label(
                     RichText::new(t("Waiting for data from the controller… move a stick"))
-                        .color(DIM),
+                        .color(theme::dim()),
                 );
             });
         });
@@ -145,7 +145,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     ui.label(if on {
                         text.color(theme::on_accent()).background_color(accent())
                     } else {
-                        text.color(FAINT)
+                        text.color(theme::faint())
                     });
                 }
                 if let Some(hz) = rate {
@@ -153,7 +153,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         ui.label(
                             RichText::new(apex5::tr!("{hz} Hz", hz = format!("{hz:.0}")))
                                 .monospace()
-                                .color(TEXT),
+                                .color(theme::text()),
                         );
                         hint(ui, t("Polling rate:"));
                     });
@@ -209,7 +209,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 (t("Gyro"), s.gyro, 1.0f32 / 32768.0, ""),
                 (t("Acceleration"), s.accel, 1.0 / 16384.0, ""),
             ] {
-                ui.label(RichText::new(name).color(DIM));
+                ui.label(RichText::new(name).color(theme::dim()));
                 for (axis, x) in ["X", "Y", "Z"].iter().zip(v) {
                     bar(ui, axis, x as f32 * k, &format!("{x:>6}{unit}"));
                 }
@@ -277,11 +277,11 @@ fn rumble(app: &mut App, ui: &mut egui::Ui) {
         ui.spacing_mut().slider_width = (ui.available_width() - 260.0).clamp(80.0, 320.0);
         let (mut l, mut r) = app.rumble;
         ui.horizontal(|ui| {
-            ui.label(RichText::new(t("Left motor")).color(DIM));
+            ui.label(RichText::new(t("Left motor")).color(theme::dim()));
             ui.add(widgets::slider(&mut l, 0..=100).suffix(" %"));
         });
         ui.horizontal(|ui| {
-            ui.label(RichText::new(t("Right motor")).color(DIM));
+            ui.label(RichText::new(t("Right motor")).color(theme::dim()));
             ui.add(widgets::slider(&mut r, 0..=100).suffix(" %"));
         });
         app.rumble = (l, r);
@@ -317,20 +317,15 @@ fn stick(
         let p = ui.painter_at(rect);
         let c = rect.center();
         let r = w / 2.0 - 6.0;
-        p.circle(
-            c,
-            r,
-            Color32::from_rgb(12, 14, 18),
-            Stroke::new(1.0, theme::BORDER),
-        );
-        p.circle_stroke(c, r * 0.5, Stroke::new(1.0, Color32::from_rgb(30, 34, 41)));
+        p.circle(c, r, theme::well(), Stroke::new(1.0, theme::border()));
+        p.circle_stroke(c, r * 0.5, Stroke::new(1.0, theme::grid()));
         p.line_segment(
             [pos2(c.x - r, c.y), pos2(c.x + r, c.y)],
-            Stroke::new(1.0, Color32::from_rgb(30, 34, 41)),
+            Stroke::new(1.0, theme::grid()),
         );
         p.line_segment(
             [pos2(c.x, c.y - r), pos2(c.x, c.y + r)],
-            Stroke::new(1.0, Color32::from_rgb(30, 34, 41)),
+            Stroke::new(1.0, theme::grid()),
         );
         // Positive Y is up on the pad, screen Y grows downwards.
         let trace = |g: &Gate, colour: Color32| {
@@ -346,9 +341,9 @@ fn stick(
                 }
             }
         };
-        trace(gate, DIM);
+        trace(gate, theme::dim());
         if let Some(o) = out {
-            trace(o, theme::OK);
+            trace(o, theme::ok());
         }
         let dot = pos2(c.x + x.clamp(-1.0, 1.0) * r, c.y - y.clamp(-1.0, 1.0) * r);
         p.line_segment([c, dot], Stroke::new(1.5, accent().gamma_multiply(0.5)));
@@ -358,11 +353,11 @@ fn stick(
             RichText::new(format!("{name}  {x:+.2}  {y:+.2}"))
                 .monospace()
                 .size(12.5)
-                .color(DIM),
+                .color(theme::dim()),
         );
-        roundness(ui, t("Sensor"), gate, DIM);
+        roundness(ui, t("Sensor"), gate, theme::dim());
         if let Some(o) = out {
-            roundness(ui, t("For games"), o, theme::OK);
+            roundness(ui, t("For games"), o, theme::ok());
         }
     });
 }
@@ -384,7 +379,7 @@ fn roundness(ui: &mut egui::Ui, what: &str, g: &Gate, colour: Color32) {
         ui.label(
             RichText::new(format!("{what}: {value}"))
                 .size(12.5)
-                .color(DIM),
+                .color(theme::dim()),
         );
     });
 }
@@ -393,18 +388,26 @@ fn trigger(ui: &mut egui::Ui, name: &str, v: u8) {
     ui.horizontal(|ui| {
         ui.add_sized(
             [30.0, 20.0],
-            egui::Label::new(RichText::new(name).font(theme::medium(13.5)).color(TEXT)),
+            egui::Label::new(
+                RichText::new(name)
+                    .font(theme::medium(13.5))
+                    .color(theme::text()),
+            ),
         );
         let w = ui.available_width() - 50.0;
         let (rect, _) = ui.allocate_exact_size(vec2(w, 12.0), egui::Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, CornerRadius::same(6), CARD_HI);
+        p.rect_filled(rect, CornerRadius::same(6), theme::card_hi());
         let f = egui::Rect::from_min_size(
             rect.min,
             vec2(rect.width() * v as f32 / 255.0, rect.height()),
         );
         p.rect_filled(f, CornerRadius::same(6), accent());
-        ui.label(RichText::new(format!("{v:>3}")).monospace().color(DIM));
+        ui.label(
+            RichText::new(format!("{v:>3}"))
+                .monospace()
+                .color(theme::dim()),
+        );
     });
 }
 
@@ -413,20 +416,25 @@ fn bar(ui: &mut egui::Ui, axis: &str, v: f32, text: &str) {
     ui.horizontal(|ui| {
         ui.add_sized(
             [16.0, 18.0],
-            egui::Label::new(RichText::new(axis).color(FAINT)),
+            egui::Label::new(RichText::new(axis).color(theme::faint())),
         );
         let w = ui.available_width() - 70.0;
         let (rect, _) = ui.allocate_exact_size(vec2(w, 8.0), egui::Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, CornerRadius::same(4), CARD_HI);
+        p.rect_filled(rect, CornerRadius::same(4), theme::card_hi());
         let c = rect.center().x;
         let x = c + v.clamp(-1.0, 1.0) * rect.width() / 2.0;
         let f = egui::Rect::from_x_y_ranges(c.min(x)..=c.max(x), rect.y_range());
         p.rect_filled(f, CornerRadius::same(4), accent());
         p.line_segment(
             [pos2(c, rect.top() - 2.0), pos2(c, rect.bottom() + 2.0)],
-            Stroke::new(1.0, FAINT),
+            Stroke::new(1.0, theme::faint()),
         );
-        ui.label(RichText::new(text).monospace().size(12.0).color(DIM));
+        ui.label(
+            RichText::new(text)
+                .monospace()
+                .size(12.0)
+                .color(theme::dim()),
+        );
     });
 }

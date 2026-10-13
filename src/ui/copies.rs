@@ -9,7 +9,7 @@ use apex5::library;
 use apex5::worker::Cmd;
 use eframe::egui::{self, RichText, vec2};
 
-use super::theme::{self, DIM, FAINT, TEXT};
+use super::theme;
 use super::widgets::{self, hint};
 use crate::App;
 
@@ -83,14 +83,18 @@ fn modal(ui: &egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) -> bool {
     egui::Modal::new(egui::Id::new("copies_modal"))
         .frame(
             egui::Frame::new()
-                .fill(theme::CARD)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .fill(theme::card())
+                .stroke(egui::Stroke::new(1.0, theme::border()))
                 .corner_radius(egui::CornerRadius::same(14))
                 .inner_margin(egui::Margin::same(20)),
         )
         .show(ui.ctx(), |ui| {
             ui.set_width(420.0);
-            ui.label(RichText::new(title).font(theme::bold(18.0)).color(TEXT));
+            ui.label(
+                RichText::new(title)
+                    .font(theme::bold(18.0))
+                    .color(theme::text()),
+            );
             ui.add_space(6.0);
             add(ui);
         })
@@ -151,7 +155,7 @@ pub fn dialogs(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(
                     RichText::new(apex5::tr!("to the folder {dir}", dir = d.display()))
                         .size(12.0)
-                        .color(FAINT),
+                        .color(theme::faint()),
                 );
             }
             ui.add_space(12.0);
@@ -226,7 +230,7 @@ fn library_list(app: &mut App, ui: &mut egui::Ui) -> bool {
     ui.add_space(6.0);
     let entries = app.library.get_or_insert_with(library::list);
     if entries.is_empty() {
-        ui.label(RichText::new(t("Nothing saved yet")).color(FAINT));
+        ui.label(RichText::new(t("Nothing saved yet")).color(theme::faint()));
     }
     let mut pick = None;
     egui::ScrollArea::vertical()
@@ -240,7 +244,11 @@ fn library_list(app: &mut App, ui: &mut egui::Ui) -> bool {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
-                        ui.label(RichText::new(&e.name).font(theme::medium(14.0)).color(TEXT));
+                        ui.label(
+                            RichText::new(&e.name)
+                                .font(theme::medium(14.0))
+                                .color(theme::text()),
+                        );
                         let sub = if e.has_lighting {
                             apex5::tr!(
                                 "\"{title}\", with lighting",
@@ -249,7 +257,7 @@ fn library_list(app: &mut App, ui: &mut egui::Ui) -> bool {
                         } else {
                             apex5::tr!("\"{title}\"", title = super::profile::shown_title(&e.title))
                         };
-                        ui.label(RichText::new(sub).size(12.0).color(DIM));
+                        ui.label(RichText::new(sub).size(12.0).color(theme::dim()));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if widgets::secondary(ui, t("Load"), true).clicked() {

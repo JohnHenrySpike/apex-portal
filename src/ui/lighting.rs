@@ -6,7 +6,7 @@ use apex5::lang::t;
 use apex5::lighting::{Effect, LedConfig, hue, left_to_right};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
 
-use super::theme::{self, BORDER, CARD_HI, DIM, HOVER, TEXT, WARN, accent};
+use super::theme::{self, accent};
 use super::widgets::{self, card, card_titled, hint};
 use super::{header, pad};
 use crate::App;
@@ -117,13 +117,13 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
     let dirty = app.led_dirty();
     let (dot, title, sub) = if dirty {
         (
-            WARN,
+            theme::warn(),
             t("Lighting changed"),
             t("Shown on the controller, but it resets when the controller sleeps"),
         )
     } else {
         (
-            theme::OK,
+            theme::ok(),
             t("All saved"),
             t("The lighting is saved in the controller"),
         )
@@ -149,7 +149,7 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
 fn strip(ui: &mut egui::Ui, frame: &[[u8; 3]], bright: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), egui::Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, CornerRadius::same(7), Color32::from_rgb(10, 12, 15));
+    p.rect_filled(rect, CornerRadius::same(7), theme::palette().led_bar);
     let n = frame.len().max(1);
     let w = rect.width() / n as f32;
     let k = 0.3 + 0.7 * bright;
@@ -163,12 +163,7 @@ fn strip(ui: &mut egui::Ui, frame: &[[u8; 3]], bright: f32) {
             vec2(w, rect.height()),
         )
         .shrink2(vec2(2.0, 3.0));
-        let col = Color32::from_rgb(
-            (c[0] as f32 * k) as u8,
-            (c[1] as f32 * k) as u8,
-            (c[2] as f32 * k) as u8,
-        );
-        p.rect_filled(r, CornerRadius::same(3), col);
+        widgets::led(p, r, 3, *c, k);
     }
 }
 
@@ -270,7 +265,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_sized(
                 [90.0, 24.0],
-                egui::Label::new(RichText::new(t("Brightness")).color(DIM)),
+                egui::Label::new(RichText::new(t("Brightness")).color(theme::dim())),
             );
             let mut b = led.cfg.brightness();
             if ui
@@ -285,7 +280,7 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.add_sized(
                     [90.0, 24.0],
-                    egui::Label::new(RichText::new(t("Speed")).color(DIM)),
+                    egui::Label::new(RichText::new(t("Speed")).color(theme::dim())),
                 );
                 // Stored as a cycle time (bigger = slower); shown as speed.
                 let mut speed = 31 - led.cfg.cycle().clamp(1, 30);
@@ -327,9 +322,9 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
     let t = ui.ctx().animate_bool_responsive(r.id, selected);
     let p = ui.painter();
     let bg = if r.hovered() && !selected {
-        HOVER
+        theme::hover()
     } else {
-        CARD_HI
+        theme::card_hi()
     };
     p.rect(
         rect,
@@ -337,7 +332,7 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
         widgets::lerp_colour(bg, accent().gamma_multiply(0.14), t),
         Stroke::new(
             if selected { 1.5 } else { 1.0 },
-            widgets::lerp_colour(BORDER, accent(), t),
+            widgets::lerp_colour(theme::border(), accent(), t),
         ),
         StrokeKind::Inside,
     );
@@ -346,7 +341,7 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
         egui::Align2::LEFT_CENTER,
         effect_name(e),
         theme::medium(13.5),
-        TEXT,
+        theme::text(),
     );
 
     // Mini preview: the effect's frames sampled over time.
@@ -365,7 +360,7 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
         pos2(rect.left() + 12.0, rect.bottom() - 20.0),
         pos2(rect.right() - 12.0, rect.bottom() - 12.0),
     );
-    p.rect_filled(bar, CornerRadius::same(4), Color32::from_rgb(10, 12, 15));
+    p.rect_filled(bar, CornerRadius::same(4), theme::palette().led_bar);
     let n = frame.len().max(1);
     let cw = bar.width() / n as f32;
     for (i, c) in left_to_right(frame.len())
@@ -378,11 +373,7 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
             vec2(cw, bar.height()),
         )
         .shrink(1.0);
-        p.rect_filled(
-            cr,
-            CornerRadius::same(2),
-            Color32::from_rgb(c[0], c[1], c[2]),
-        );
+        widgets::led(p, cr, 2, *c, 1.0);
     }
     if e.animated() {
         ui.ctx().request_repaint_after(Duration::from_millis(50));

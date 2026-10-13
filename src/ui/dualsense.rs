@@ -8,7 +8,7 @@ use apex5::lang::t;
 use apex5::worker::Cmd;
 use eframe::egui::{self, RichText, vec2};
 
-use super::theme::{self, DIM, FAINT, TEXT, WARN, accent};
+use super::theme::{self, accent};
 use super::widgets::{self, card, card_titled, hint, pill};
 use crate::App;
 
@@ -59,7 +59,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
                     "No access to /dev/uhid: it needs a udev rule and the uhid module. \
                      The button below sets up both.",
                 ))
-                .color(WARN),
+                .color(theme::warn()),
             );
             ui.add_space(4.0);
             super::screen::rule_offer(app, ui);
@@ -77,7 +77,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
                     } else {
                         t("nobody has connected yet")
                     },
-                    Some(if st.opened { accent() } else { FAINT }),
+                    Some(if st.opened { accent() } else { theme::faint() }),
                 );
                 pill(
                     ui,
@@ -86,7 +86,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
                     } else {
                         t("Apex not responding: buttons released")
                     },
-                    Some(if st.pad { accent() } else { WARN }),
+                    Some(if st.pad { accent() } else { theme::warn() }),
                 );
             });
             ui.add_space(8.0);
@@ -95,9 +95,11 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
                 .spacing([14.0, 6.0])
                 .show(ui, |ui| {
                     for (side, name) in [(0, "LT"), (1, "RT")] {
-                        ui.label(RichText::new(name).color(DIM));
+                        ui.label(RichText::new(name).color(theme::dim()));
                         match &st.effects[side] {
-                            None => ui.label(RichText::new(t("the game set nothing")).color(FAINT)),
+                            None => ui.label(
+                                RichText::new(t("the game set nothing")).color(theme::faint()),
+                            ),
                             Some((e, a)) => ui.add(
                                 egui::Label::new(
                                     RichText::new(format!(
@@ -107,7 +109,7 @@ pub fn page(app: &mut App, ui: &mut egui::Ui) {
                                             t("not translated, the trigger stays as it was").into()
                                         })
                                     ))
-                                    .color(TEXT),
+                                    .color(theme::text()),
                                 )
                                 .wrap(),
                             ),
@@ -175,14 +177,20 @@ fn steam_hint(ui: &mut egui::Ui) {
     );
     ui.add_space(6.0);
     egui::Frame::new()
-        .fill(theme::BG)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .fill(theme::bg())
+        .stroke(egui::Stroke::new(1.0, theme::border()))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.add(
-                egui::Label::new(RichText::new(STEAM).monospace().size(12.0).color(TEXT)).wrap(),
+                egui::Label::new(
+                    RichText::new(STEAM)
+                        .monospace()
+                        .size(12.0)
+                        .color(theme::text()),
+                )
+                .wrap(),
             );
         });
     ui.add_space(6.0);

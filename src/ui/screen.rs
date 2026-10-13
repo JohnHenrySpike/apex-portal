@@ -16,7 +16,7 @@ use eframe::egui::{
 };
 use image::imageops::{self, FilterType};
 
-use super::theme::{self, BAD, BORDER, DIM, FAINT, OK, TEXT, WARN, accent};
+use super::theme::{self, accent};
 use super::widgets::{self, hint, row};
 use crate::App;
 
@@ -452,7 +452,7 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
     });
     if let Some((msg, err)) = &app.screen.result {
         ui.add_space(4.0);
-        ui.label(RichText::new(msg).color(if *err { BAD } else { OK }));
+        ui.label(RichText::new(msg).color(if *err { theme::bad() } else { theme::ok() }));
     }
 
     let wired = app.info.as_ref().is_some_and(|i| i.wired);
@@ -511,7 +511,7 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
         };
         match &blocker {
             Some(b) => {
-                ui.label(RichText::new(b).color(WARN));
+                ui.label(RichText::new(b).color(theme::warn()));
                 if wired && !rule {
                     ui.add_space(4.0);
                     if rule_button(ui, installing) {
@@ -523,7 +523,7 @@ fn own(app: &mut App, ui: &mut egui::Ui, action: &mut Option<Action>) {
                 ui.label(
                     RichText::new(t("Don't unplug the cable while uploading"))
                         .size(12.5)
-                        .color(DIM),
+                        .color(theme::dim()),
                 )
                 .on_hover_text(t(
                     "While uploading, don't unplug the cable or turn the controller off. \
@@ -867,7 +867,7 @@ fn editor(ui: &mut egui::Ui, d: &mut Draft) {
     p.rect_stroke(
         rect,
         CornerRadius::same(2),
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0, theme::border()),
         StrokeKind::Inside,
     );
 }
@@ -943,7 +943,7 @@ fn result_column(d: &mut Draft, ui: &mut egui::Ui) {
 
 /// The name, frames, speed and how long the upload takes.
 fn about(ui: &mut egui::Ui, d: &mut Draft) {
-    ui.add(egui::Label::new(RichText::new(&d.name).color(TEXT)).truncate());
+    ui.add(egui::Label::new(RichText::new(&d.name).color(theme::text())).truncate());
     let n = d.upload.frames;
     let what = match (&d.source, n) {
         (None, _) => apex5::tr!("Flydigi factory animation, frames: {n}", n),
@@ -958,13 +958,13 @@ fn about(ui: &mut egui::Ui, d: &mut Draft) {
                 max = screen::MAX_FRAMES
             ))
             .size(12.5)
-            .color(WARN),
+            .color(theme::warn()),
         );
     }
     if d.source.is_some() && n > 1 {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(t("Frame")).color(DIM));
+            ui.label(RichText::new(t("Frame")).color(theme::dim()));
             let r = ui.add(
                 egui::DragValue::new(&mut d.interval_ms)
                     .range(screen::INTERVAL_MS.0..=screen::INTERVAL_MS.1)
@@ -983,7 +983,7 @@ fn about(ui: &mut egui::Ui, d: &mut Draft) {
         &apex5::tr!("The upload takes about {minutes} min", minutes),
     );
     if let Some(e) = &d.error {
-        ui.label(RichText::new(e).color(BAD));
+        ui.label(RichText::new(e).color(theme::bad()));
     }
 }
 
@@ -1008,7 +1008,7 @@ fn preview(ui: &mut egui::Ui, d: &mut Draft) {
     let size = vec2(screen::W as f32 * scale, screen::H as f32 * scale);
     egui::Frame::new()
         .fill(Color32::BLACK)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
@@ -1037,17 +1037,17 @@ pub fn job_page(app: &App, ui: &mut egui::Ui) {
         ui.label(
             RichText::new(t("Uploading the picture to the screen"))
                 .font(theme::bold(24.0))
-                .color(TEXT),
+                .color(theme::text()),
         );
         ui.add_space(16.0);
         match &job.stage {
             None => {
                 ui.add(egui::Spinner::new().size(22.0).color(accent()));
-                ui.label(RichText::new(t("Checking the connection…")).color(DIM));
+                ui.label(RichText::new(t("Checking the connection…")).color(theme::dim()));
             }
             Some(Stage::Switching) => {
                 ui.add(egui::Spinner::new().size(22.0).color(accent()));
-                ui.label(RichText::new(t("The screen is switching to upload mode…")).color(DIM));
+                ui.label(RichText::new(t("The screen is switching to upload mode…")).color(theme::dim()));
             }
             Some(Stage::Writing(done, total)) => {
                 let f = *done as f32 / (*total).max(1) as f32;
@@ -1067,26 +1067,26 @@ pub fn job_page(app: &App, ui: &mut egui::Ui) {
                 };
                 ui.label(
                     RichText::new(apex5::tr!("{percent}% · {spent} elapsed{left}", percent = format!("{:.0}", f * 100.0), spent = clock(spent), left))
-                    .color(DIM),
+                    .color(theme::dim()),
                 );
             }
             Some(Stage::Saving) => {
                 ui.add(egui::Spinner::new().size(22.0).color(accent()));
                 ui.label(
                     RichText::new(t("The screen is saving the picture, then the controller restarts. About 20 seconds."))
-                    .color(DIM),
+                    .color(theme::dim()),
                 );
             }
         }
         ui.add_space(20.0);
         ui.label(
             RichText::new(t("Don't unplug the cable, turn the controller off or close the app."))
-            .color(WARN),
+            .color(theme::warn()),
         );
         ui.label(
             RichText::new(t("An interrupted upload leaves the screen without a picture, but it can be repeated."))
                 .size(12.5)
-                .color(FAINT),
+                .color(theme::faint()),
         );
     });
 }

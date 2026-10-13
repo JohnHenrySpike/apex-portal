@@ -8,9 +8,9 @@ use apex5::profile::{
     XINPUT_TARGETS, key_name,
 };
 use apex5::worker::Cmd;
-use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
+use eframe::egui::{self, CornerRadius, RichText, Stroke, StrokeKind, pos2, vec2};
 
-use super::theme::{self, BORDER, CARD_HI, DIM, FAINT, TEXT, WARN, accent};
+use super::theme::{self, accent};
 use super::widgets::{self, card, card_titled, hint, segmented};
 use super::{header, pad};
 use crate::{App, ProfileTab};
@@ -39,7 +39,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                      and the controller's normal input is off.",
                     by
                 ))
-                .color(WARN),
+                .color(theme::warn()),
             );
         });
         ui.add_space(12.0);
@@ -65,7 +65,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             super::copies::menu(app, ui);
             title_edit(app, ui);
-            ui.label(RichText::new(t("Name#profile")).color(DIM));
+            ui.label(RichText::new(t("Name#profile")).color(theme::dim()));
         });
     };
     if ui.available_width() > 860.0 {
@@ -114,19 +114,19 @@ pub fn action_bar(app: &mut App, ui: &mut egui::Ui) {
     let flash = app.flash_dirty;
     let (dot, title, sub) = if dirty {
         (
-            WARN,
+            theme::warn(),
             t("Unsaved changes"),
             t("Not yet written to the controller"),
         )
     } else if flash {
         (
-            WARN,
+            theme::warn(),
             t("Applied, not saved"),
             t("Lost when the controller sleeps"),
         )
     } else {
         (
-            theme::OK,
+            theme::ok(),
             t("All saved"),
             t("The controller matches the screen"),
         )
@@ -410,7 +410,11 @@ fn assignments(p: &Profile, selected: &mut u8, marked: &[u8], ui: &mut egui::Ui)
             if k.turbo() {
                 value += &apex5::tr!(" · turbo {rate}/s", rate = k.turbo_freq);
             }
-            let colour = if id == *selected { accent() } else { TEXT };
+            let colour = if id == *selected {
+                accent()
+            } else {
+                theme::text()
+            };
             if widgets::link_row(ui, &key_title(id), &value, colour)
                 .on_hover_text(t("Set up this button"))
                 .clicked()
@@ -436,7 +440,7 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
         ui.label(
             RichText::new(key_title(id))
                 .font(theme::bold(20.0))
-                .color(TEXT),
+                .color(theme::text()),
         );
         ui.add_space(6.0);
 
@@ -476,7 +480,7 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
                     RichText::new(t(
                         "A keyboard key is assigned — this doesn't work on Linux.",
                     ))
-                    .color(WARN),
+                    .color(theme::warn()),
                 );
             }
             if macros.iter().all(|m| m.key != id) {
@@ -521,7 +525,7 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
         }
         if mode != 0 {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(t("Frequency")).color(DIM));
+                ui.label(RichText::new(t("Frequency")).color(theme::dim()));
                 ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(80.0);
                 ui.add(widgets::slider(&mut k.turbo_freq, 1..=40).suffix(t(" /s")))
                     .on_hover_text(t("Presses per second"));
@@ -545,19 +549,23 @@ fn chip(ui: &mut egui::Ui, size: egui::Vec2, selected: bool, text: &str) -> egui
     let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
     let t = ui.ctx().animate_bool_responsive(r.id, selected);
     let bg = if r.hovered() && !selected {
-        theme::HOVER
+        theme::hover()
     } else {
-        CARD_HI
+        theme::card_hi()
     };
     let p = ui.painter();
     p.rect(
         rect,
         CornerRadius::same(8),
         widgets::lerp_colour(bg, accent(), t),
-        Stroke::new(1.0, widgets::lerp_colour(BORDER, accent(), t)),
+        Stroke::new(1.0, widgets::lerp_colour(theme::border(), accent(), t)),
         StrokeKind::Inside,
     );
-    let colour = if selected { theme::on_accent() } else { TEXT };
+    let colour = if selected {
+        theme::on_accent()
+    } else {
+        theme::text()
+    };
     p.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -634,18 +642,18 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                     ui.label(
                         RichText::new(apex5::tr!("Macro on button {key}", key = key_name(m.key)))
                             .font(theme::medium(15.0))
-                            .color(TEXT),
+                            .color(theme::text()),
                     );
                     ui.label(
                         RichText::new(apex5::tr!("steps: {count}", count = m.steps.len()))
                             .size(12.0)
-                            .color(DIM),
+                            .color(theme::dim()),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(
-                            egui::Button::new(RichText::new(t("Delete")).color(theme::BAD))
+                            egui::Button::new(RichText::new(t("Delete")).color(theme::bad()))
                                 .frame(false),
                         )
                         .clicked()
@@ -659,7 +667,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 segmented(ui, &mut m.kind, &kinds);
                 if m.kind != 1 {
                     let mut iv = m.interval_ms.unwrap_or(30);
-                    ui.label(RichText::new(t("pause between repeats")).color(DIM));
+                    ui.label(RichText::new(t("pause between repeats")).color(theme::dim()));
                     if ui
                         .add(
                             egui::DragValue::new(&mut iv)
@@ -678,7 +686,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
             let mut del = None;
             for (si, st) in m.steps.iter_mut().enumerate() {
                 egui::Frame::new()
-                    .fill(CARD_HI)
+                    .fill(theme::card_hi())
                     .corner_radius(CornerRadius::same(8))
                     .inner_margin(egui::Margin::symmetric(10, 4))
                     .show(ui, |ui| {
@@ -686,7 +694,7 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                             ui.label(
                                 RichText::new(format!("{:>2}", si + 1))
                                     .monospace()
-                                    .color(FAINT),
+                                    .color(theme::faint()),
                             );
                             ui.add(
                                 egui::DragValue::new(&mut st.delay_ms)
@@ -713,8 +721,10 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                                 |ui| {
                                     if ui
                                         .add(
-                                            egui::Button::new(RichText::new("✕").color(DIM))
-                                                .frame(false),
+                                            egui::Button::new(
+                                                RichText::new("✕").color(theme::dim()),
+                                            )
+                                            .frame(false),
                                         )
                                         .on_hover_text(t("Delete step"))
                                         .clicked()
@@ -760,7 +770,9 @@ fn macros_ui(macros: &mut Vec<Macro>, ui: &mut egui::Ui) {
                 }
                 let presses = m.steps.iter().filter(|s| s.press).count();
                 if presses * 2 != m.steps.len() {
-                    ui.label(RichText::new(t("presses and releases don't match")).color(WARN));
+                    ui.label(
+                        RichText::new(t("presses and releases don't match")).color(theme::warn()),
+                    );
                 }
             });
         });
@@ -796,7 +808,7 @@ fn sticks(p: &mut Profile, input: Option<InputState>, ui: &mut egui::Ui) {
     ui.label(
         RichText::new(t("You can drag the points on the graph."))
             .size(12.5)
-            .color(DIM),
+            .color(theme::dim()),
     )
     .on_hover_text(t(
         "The controller plays a 9-point curve; it is recomputed from these settings.",
@@ -847,7 +859,7 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
                 .num_columns(2)
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new(t("Center")).color(DIM))
+                    ui.label(RichText::new(t("Center")).color(theme::dim()))
                         .on_hover_text(t(
                             "Right — dead zone: the stick is silent near the center.\n\
                          Left — offset: the output starts right at this value, \
@@ -858,7 +870,7 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
                         v => apex5::tr!("dead zone {v} %", v),
                     });
                     ui.end_row();
-                    ui.label(RichText::new(t("Edge")).color(DIM))
+                    ui.label(RichText::new(t("Edge")).color(theme::dim()))
                         .on_hover_text(t("Right — outer zone: full output before the stop.\n\
                          Left — ceiling: even at the stop the output stays below 100 %, \
                          for precise aiming."));
@@ -867,7 +879,7 @@ fn stick_card(p: &mut Profile, side: usize, live: Option<(f32, f32)>, ui: &mut e
                         v => apex5::tr!("outer zone {v} %", v),
                     });
                     ui.end_row();
-                    ui.label(RichText::new(t("Gate shape")).color(DIM));
+                    ui.label(RichText::new(t("Gate shape")).color(theme::dim()));
                     segmented(
                         ui,
                         &mut s.round,
@@ -923,18 +935,13 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
         let c = rect.center();
         let r = w / 2.0 - 4.0;
         if s.round {
-            p.circle(
-                c,
-                r,
-                Color32::from_rgb(12, 14, 18),
-                Stroke::new(1.0, BORDER),
-            );
+            p.circle(c, r, theme::well(), Stroke::new(1.0, theme::border()));
         } else {
             p.rect(
                 egui::Rect::from_center_size(c, vec2(2.0 * r, 2.0 * r)),
                 CornerRadius::same(10),
-                Color32::from_rgb(12, 14, 18),
-                Stroke::new(1.0, BORDER),
+                theme::well(),
+                Stroke::new(1.0, theme::border()),
                 StrokeKind::Inside,
             );
         }
@@ -953,11 +960,11 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
         }
         p.line_segment(
             [pos2(c.x - r, c.y), pos2(c.x + r, c.y)],
-            Stroke::new(1.0, Color32::from_rgb(30, 34, 41)),
+            Stroke::new(1.0, theme::grid()),
         );
         p.line_segment(
             [pos2(c.x, c.y - r), pos2(c.x, c.y + r)],
-            Stroke::new(1.0, Color32::from_rgb(30, 34, 41)),
+            Stroke::new(1.0, theme::grid()),
         );
         match live {
             Some((x, y)) => {
@@ -969,7 +976,7 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
                     0.0
                 };
                 let out = pos2(c.x + x * k * r, c.y - y * k * r);
-                p.circle_stroke(raw, 6.0, Stroke::new(1.5, DIM));
+                p.circle_stroke(raw, 6.0, Stroke::new(1.5, theme::dim()));
                 p.circle_filled(out, 11.0, accent().gamma_multiply(0.2));
                 p.circle_filled(out, 6.0, accent());
             }
@@ -979,7 +986,7 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
                     egui::Align2::CENTER_CENTER,
                     t("move the\nstick"),
                     egui::FontId::proportional(12.0),
-                    FAINT,
+                    theme::faint(),
                 );
             }
         }
@@ -987,11 +994,11 @@ fn stick_preview(ui: &mut egui::Ui, w: f32, s: &profile::Stick, live: Option<(f3
             ui.spacing_mut().item_spacing.x = 4.0;
             let (rr, _) = ui.allocate_exact_size(vec2(10.0, 14.0), egui::Sense::hover());
             ui.painter()
-                .circle_stroke(rr.center(), 4.0, Stroke::new(1.5, DIM));
-            ui.label(RichText::new(t("stick")).size(11.5).color(DIM));
+                .circle_stroke(rr.center(), 4.0, Stroke::new(1.5, theme::dim()));
+            ui.label(RichText::new(t("stick")).size(11.5).color(theme::dim()));
             let (rr, _) = ui.allocate_exact_size(vec2(10.0, 14.0), egui::Sense::hover());
             ui.painter().circle_filled(rr.center(), 4.0, accent());
-            ui.label(RichText::new(t("in game")).size(11.5).color(DIM));
+            ui.label(RichText::new(t("in game")).size(11.5).color(theme::dim()));
         });
     });
 }
@@ -1015,35 +1022,35 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
     };
 
     let pt = ui.painter_at(rect);
-    pt.rect_filled(rect, CornerRadius::same(10), Color32::from_rgb(12, 14, 18));
+    pt.rect_filled(rect, CornerRadius::same(10), theme::well());
     for i in 1..4 {
         let f = i as f32 * 25.0;
         pt.line_segment(
             [map(f, 0.0), map(f, 100.0)],
-            Stroke::new(1.0, Color32::from_rgb(28, 32, 39)),
+            Stroke::new(1.0, theme::grid()),
         );
         pt.line_segment(
             [map(0.0, f), map(100.0, f)],
-            Stroke::new(1.0, Color32::from_rgb(28, 32, 39)),
+            Stroke::new(1.0, theme::grid()),
         );
     }
     pt.line_segment(
         [map(0.0, 0.0), map(100.0, 100.0)],
-        Stroke::new(1.0, Color32::from_rgb(48, 54, 64)),
+        Stroke::new(1.0, theme::grid_hi()),
     );
     pt.text(
         map(1.0, 99.0),
         egui::Align2::LEFT_TOP,
         t("output"),
         egui::FontId::proportional(11.0),
-        FAINT,
+        theme::faint(),
     );
     pt.text(
         map(99.0, 1.0),
         egui::Align2::RIGHT_BOTTOM,
         t("stick deflection"),
         egui::FontId::proportional(11.0),
-        FAINT,
+        theme::faint(),
     );
 
     let shown = compiled(s);
@@ -1078,13 +1085,13 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
         let out = shown.output(m as f64).min(100.0) as f32;
         pt.line_segment(
             [map(m, 0.0), map(m, out)],
-            Stroke::new(1.0, Color32::from_white_alpha(60)),
+            Stroke::new(1.0, theme::strong().gamma_multiply(0.24)),
         );
         pt.line_segment(
             [map(0.0, out), map(m, out)],
-            Stroke::new(1.0, Color32::from_white_alpha(60)),
+            Stroke::new(1.0, theme::strong().gamma_multiply(0.24)),
         );
-        pt.circle_filled(map(m, out), 5.0, Color32::WHITE);
+        pt.circle_filled(map(m, out), 5.0, theme::strong());
     }
 
     // Control points, drawn where their nodes sit between start and end.
@@ -1109,7 +1116,7 @@ fn curve(ui: &mut egui::Ui, s: &mut profile::Stick, side: usize, live: Option<f3
         pt.circle(
             at,
             if hot { 8.0 } else { 6.5 },
-            theme::BG,
+            theme::bg(),
             Stroke::new(2.5, accent()),
         );
         if r.dragged()
@@ -1165,7 +1172,7 @@ fn triggers(p: &mut Profile, ui: &mut egui::Ui) {
     ui.label(
         RichText::new(t("Trigger modes take effect after \"Apply\"."))
             .size(12.5)
-            .color(DIM),
+            .color(theme::dim()),
     )
     .on_hover_text(t(
         "\"Game vibration\" stays while the controller is connected: if you switch profiles with \
@@ -1195,8 +1202,8 @@ fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| {
                     ui.label("");
-                    ui.label(RichText::new(t("Left motor")).color(DIM));
-                    ui.label(RichText::new(t("Right motor")).color(DIM));
+                    ui.label(RichText::new(t("Left motor")).color(theme::dim()));
+                    ui.label(RichText::new(t("Right motor")).color(theme::dim()));
                     ui.end_row();
                     let row = |ui: &mut egui::Ui,
                                name: &str,
@@ -1204,7 +1211,7 @@ fn grip_vibration_card(p: &mut Profile, ui: &mut egui::Ui) {
                                motors: &mut [GripMotor; 2],
                                field: fn(&mut GripMotor) -> &mut u8,
                                slider: fn(&mut u8) -> egui::Slider<'_>| {
-                        ui.label(RichText::new(name).color(DIM)).on_hover_text(tip);
+                        ui.label(RichText::new(name).color(theme::dim())).on_hover_text(tip);
                         for m in motors.iter_mut() {
                             ui.add(slider(field(m)));
                         }
@@ -1274,7 +1281,7 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
             ui.label(
                 RichText::new(t("Travel"))
                     .font(theme::medium(14.5))
-                    .color(TEXT),
+                    .color(theme::text()),
             )
             .on_hover_text(t(
                 "Move the end left so a short press fires the trigger fully.",
@@ -1288,13 +1295,13 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
             ui.label(
                 RichText::new(t("Mode"))
                     .font(theme::medium(14.5))
-                    .color(TEXT),
+                    .color(theme::text()),
             );
             let mut f = p.force(side);
             if f.mode >= FORCE_MODES {
                 ui.label(
                     RichText::new(apex5::tr!("The profile holds an unknown mode ({mode}). You can replace it with one of the modes below.", mode = f.mode))
-                    .color(WARN),
+                    .color(theme::warn()),
                 );
             }
             let before = f;
@@ -1317,7 +1324,8 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
             let mode = f.mode;
             let (pr, bind) = (&mut f.params, &mut f.bind);
             let row = |ui: &mut egui::Ui, name: &str, tip: &str, slider: egui::Slider<'_>| {
-                ui.label(RichText::new(name).color(DIM)).on_hover_text(tip);
+                ui.label(RichText::new(name).color(theme::dim()))
+                    .on_hover_text(tip);
                 ui.add(slider);
                 ui.end_row();
             };
@@ -1326,10 +1334,10 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                 .spacing([14.0, 8.0])
                 .show(ui, |ui| match mode {
                     1 => {
-                        ui.label(RichText::new(t("Start")).color(DIM));
+                        ui.label(RichText::new(t("Start")).color(theme::dim()));
                         ui.add(widgets::slider(&mut pr[0], 0..=192));
                         ui.end_row();
-                        ui.label(RichText::new(t("Strength")).color(DIM));
+                        ui.label(RichText::new(t("Strength")).color(theme::dim()));
                         ui.add(widgets::slider(&mut pr[1], 1..=255));
                         ui.end_row();
                     }
@@ -1359,7 +1367,7 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                             t("Shake frequency."),
                             widgets::slider(freq, 1..=255),
                         );
-                        ui.label(RichText::new(t("Respond to pressure")).color(DIM));
+                        ui.label(RichText::new(t("Respond to pressure")).color(theme::dim()));
                         let mut m = pr[4] == 1;
                         if widgets::toggle(ui, &mut m).changed() {
                             pr[4] = m as u8;
@@ -1367,16 +1375,16 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         ui.end_row();
                     }
                     3 => {
-                        ui.label(RichText::new(t("Start")).color(DIM));
+                        ui.label(RichText::new(t("Start")).color(theme::dim()));
                         ui.add(widgets::slider(&mut pr[0], 0..=192));
                         ui.end_row();
-                        ui.label(RichText::new(t("Stop length")).color(DIM));
+                        ui.label(RichText::new(t("Stop length")).color(theme::dim()));
                         ui.add(widgets::slider(&mut pr[1], 1..=255));
                         ui.end_row();
-                        ui.label(RichText::new(t("Strength")).color(DIM));
+                        ui.label(RichText::new(t("Strength")).color(theme::dim()));
                         ui.add(widgets::slider(&mut pr[2], 1..=255));
                         ui.end_row();
-                        ui.label(RichText::new(t("Respond to pressure")).color(DIM));
+                        ui.label(RichText::new(t("Respond to pressure")).color(theme::dim()));
                         let mut m = pr[4] == 1;
                         if widgets::toggle(ui, &mut m).changed() {
                             pr[4] = m as u8;
@@ -1384,7 +1392,7 @@ fn trigger_card(p: &mut Profile, side: usize, ui: &mut egui::Ui) {
                         ui.end_row();
                     }
                     4 => {
-                        ui.label(RichText::new(t("Stop point")).color(DIM));
+                        ui.label(RichText::new(t("Stop point")).color(theme::dim()));
                         ui.add(widgets::slider(&mut pr[0], 20..=200));
                         ui.end_row();
                     }
@@ -1434,7 +1442,7 @@ fn travel_bar(ui: &mut egui::Ui, start: &mut u8, end: &mut u8, side: usize) -> b
     );
     let x_of = |v: u8| rail.left() + v as f32 / 255.0 * rail.width();
     let p = ui.painter();
-    p.rect_filled(rail, CornerRadius::same(4), CARD_HI);
+    p.rect_filled(rail, CornerRadius::same(4), theme::card_hi());
     let active = egui::Rect::from_min_max(
         pos2(x_of(*start), rail.top()),
         pos2(x_of(*end), rail.bottom()),
@@ -1453,7 +1461,7 @@ fn travel_bar(ui: &mut egui::Ui, start: &mut u8, end: &mut u8, side: usize) -> b
         ui.painter().circle(
             c,
             if hot { 10.0 } else { 9.0 },
-            TEXT,
+            theme::palette().knob,
             Stroke::new(3.0, accent()),
         );
         if r.dragged()
@@ -1474,14 +1482,14 @@ fn travel_bar(ui: &mut egui::Ui, start: &mut u8, end: &mut u8, side: usize) -> b
         egui::Align2::LEFT_BOTTOM,
         apex5::tr!("start {percent}%", percent = pct(*start)),
         egui::FontId::proportional(12.0),
-        DIM,
+        theme::dim(),
     );
     ui.painter().text(
         pos2(rail.right(), rect.bottom() - 6.0),
         egui::Align2::RIGHT_BOTTOM,
         apex5::tr!("end {percent}%", percent = pct(*end)),
         egui::FontId::proportional(12.0),
-        DIM,
+        theme::dim(),
     );
     changed
 }
@@ -1525,7 +1533,7 @@ fn gyro(p: &mut Profile, ui: &mut egui::Ui) {
         ui.label(
             RichText::new(t("Gyro as a stick"))
                 .font(theme::bold(18.0))
-                .color(TEXT),
+                .color(theme::text()),
         );
         hint(
             ui,
@@ -1548,10 +1556,10 @@ fn gyro(p: &mut Profile, ui: &mut egui::Ui) {
                 .num_columns(2)
                 .spacing([20.0, 10.0])
                 .show(ui, |ui| {
-                    ui.label(RichText::new(t("Enable button")).color(DIM));
+                    ui.label(RichText::new(t("Enable button")).color(theme::dim()));
                     key_combo(ui, "gk", &mut g.key);
                     ui.end_row();
-                    ui.label(RichText::new(t("How to enable")).color(DIM));
+                    ui.label(RichText::new(t("How to enable")).color(theme::dim()));
                     segmented(
                         ui,
                         &mut g.hold,
@@ -1559,24 +1567,24 @@ fn gyro(p: &mut Profile, ui: &mut egui::Ui) {
                     );
                     ui.end_row();
                     if g.hold {
-                        ui.label(RichText::new(t("Second button")).color(DIM));
+                        ui.label(RichText::new(t("Second button")).color(theme::dim()));
                         key_combo(ui, "gk2", &mut g.key2);
                         ui.end_row();
                     }
-                    ui.label(RichText::new(t("Dead zone")).color(DIM));
+                    ui.label(RichText::new(t("Dead zone")).color(theme::dim()));
                     ui.add(widgets::slider(&mut g.deadzone, 0..=100));
                     ui.end_row();
-                    ui.label(RichText::new(t("X sensitivity")).color(DIM));
+                    ui.label(RichText::new(t("X sensitivity")).color(theme::dim()));
                     ui.add(widgets::slider(&mut g.sens_x, 0..=100));
                     ui.end_row();
-                    ui.label(RichText::new(t("Y sensitivity")).color(DIM));
+                    ui.label(RichText::new(t("Y sensitivity")).color(theme::dim()));
                     ui.add(widgets::slider(&mut g.sens_y, 0..=100));
                     ui.end_row();
                 });
         });
         if g.hold && g.key2 == 0 && g.kind != 0 {
             ui.add_space(4.0);
-            ui.label(RichText::new(t("The second button is now \"D-pad up\" (the factory value) — it also turns the gyro on.")).color(WARN));
+            ui.label(RichText::new(t("The second button is now \"D-pad up\" (the factory value) — it also turns the gyro on.")).color(theme::warn()));
         }
     });
     if g != before {

@@ -22,8 +22,13 @@ const SVG: &str = include_str!("../../assets/apex5.svg");
 const SCREEN: [f32; 4] = [452.65, 144.48, 531.35, 182.33];
 /// How far a stick cap moves at full deflection.
 const STICK_TRAVEL: f32 = 13.0;
-/// The drawing's line colour.
-const INK: Color32 = Color32::from_rgb(157, 183, 220);
+/// The drawing's line and body colours, swapped for the theme's.
+const INK: &str = "#9db7dc";
+const BODY: &str = "#1a2636";
+
+fn hex(c: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
 
 /// Which of the lighting block's 12 colours each LED shows, as found on a
 /// pad with `apex5ctl led probe`: ten along the strip, left to right, and the
@@ -129,13 +134,19 @@ struct StripPoint {
     t: f32,
 }
 
-struct Art {
+/// The drawing in one theme's ink.
+struct Trees {
     /// The whole drawing without the stick caps.
     full: usvg::Tree,
     /// The pad alone: no stick caps, no tiles, cropped to the pad.
     pad: usvg::Tree,
     /// The drawing as it is, for rendering the caps on their own.
     src: usvg::Tree,
+}
+
+struct Art {
+    /// Dark and light.
+    trees: [Trees; 2],
     /// viewBox of the whole drawing and of the pad alone: x, y, width, height.
     view: [f32; 4],
     pad_view: [f32; 4],
@@ -191,14 +202,23 @@ fn art() -> &'static Art {
 
         let opt = usvg::Options::default();
         let tree = |svg: &str| usvg::Tree::from_str(svg, &opt).expect("assets/apex5.svg parses");
-        let src = tree(SVG);
-        let no_caps = without_groups(SVG, &["ls-cap", "rs-cap"]);
-        let full = tree(&no_caps);
-        let pad = tree(&without_groups(&no_caps, &["tiles"]).replacen(
-            &format!("viewBox=\"{}\"", root.attribute("viewBox").unwrap()),
-            &format!("viewBox=\"{}\"", root.attribute("data-pad-view").unwrap()),
-            1,
-        ));
+        let trees = |pal: &theme::Palette| {
+            let svg = SVG
+                .replace(INK, &hex(pal.ink))
+                .replace(BODY, &hex(pal.body));
+            let no_caps = without_groups(&svg, &["ls-cap", "rs-cap"]);
+            Trees {
+                src: tree(&svg),
+                full: tree(&no_caps),
+                pad: tree(&without_groups(&no_caps, &["tiles"]).replacen(
+                    &format!("viewBox=\"{}\"", root.attribute("viewBox").unwrap()),
+                    &format!("viewBox=\"{}\"", root.attribute("data-pad-view").unwrap()),
+                    1,
+                )),
+            }
+        };
+        let trees = [trees(&theme::DARK), trees(&theme::LIGHT)];
+        let src = &trees[0].src;
 
         let node = |id: &str| {
             src.node_by_id(id)
@@ -228,9 +248,7 @@ fn art() -> &'static Art {
         strip_leds.sort_by(f32::total_cmp);
         let plate_leds = led_points("plate");
         Art {
-            full,
-            pad,
-            src,
+            trees,
             view,
             pad_view,
             areas,
@@ -489,6 +507,7 @@ fn strip_points(line: &[[f32; 2]], step: f32) -> Vec<StripPoint> {
 struct Raster {
     px: [usize; 2],
     tiles: bool,
+    light: bool,
     base: TextureHandle,
     /// Stick caps with their rest rectangles in drawing coordinates.
     caps: [(TextureHandle, [f32; 4]); 2],
@@ -509,21 +528,26 @@ fn render_node(node: &usvg::Node, px: [usize; 2], scale: f32, view: [f32; 4]) ->
     ColorImage::from_rgba_premultiplied(px, pixmap.data())
 }
 
-/// Rasters for the given pixel size, cached across frames. A few sizes are
-/// kept, since several screens show the pad at different sizes.
+/// Rasters for the given pixel size and theme, cached across frames. A few
+/// are kept, since several screens show the pad at different sizes.
 fn raster(ctx: &egui::Context, px: [usize; 2], tiles: bool) -> Raster {
     let id = Id::new("apex5-pad-rasters");
+    let light = theme::is_light();
     if let Some(r) = ctx.data(|d| {
-        d.get_temp::<Vec<Raster>>(id)
-            .and_then(|v| v.iter().find(|r| r.px == px && r.tiles == tiles).cloned())
+        d.get_temp::<Vec<Raster>>(id).and_then(|v| {
+            v.iter()
+                .find(|r| r.px == px && r.tiles == tiles && r.light == light)
+                .cloned()
+        })
     }) {
         return r;
     }
     let a = art();
+    let t = &a.trees[light as usize];
     let (tree, view) = if tiles {
-        (&a.full, a.view)
+        (&t.full, a.view)
     } else {
-        (&a.pad, a.pad_view)
+        (&t.pad, a.pad_view)
     };
     let scale = px[0] as f32 / view[2];
     let base = ctx.load_texture(
@@ -536,7 +560,7 @@ fn raster(ctx: &egui::Context, px: [usize; 2], tiles: bool) -> Raster {
         TextureOptions::LINEAR,
     );
     let caps = CAPS.map(|(_, id)| {
-        let node = a.src.node_by_id(id).expect("cap group exists");
+        let node = t.src.node_by_id(id).expect("cap group exists");
         let bb = node.abs_layer_bounding_box().expect("cap has a size");
         let size = [
             (bb.width() * scale).ceil() as usize + 1,
@@ -555,6 +579,7 @@ fn raster(ctx: &egui::Context, px: [usize; 2], tiles: bool) -> Raster {
     let r = Raster {
         px,
         tiles,
+        light,
         base,
         caps,
     };
@@ -622,7 +647,7 @@ fn overlay(p: &egui::Painter, xf: &Xf, a: &Area, st: KeyState, level: f32, shift
     } else if st.selected {
         acc.gamma_multiply(0.35)
     } else if st.hovered {
-        Color32::from_white_alpha(14)
+        theme::wash()
     } else {
         Color32::TRANSPARENT
     };
@@ -663,16 +688,12 @@ fn fill_area(p: &egui::Painter, xf: &Xf, a: &Area, fill: Color32, stroke: Stroke
 
 fn mark(p: &egui::Painter, xf: &Xf, at: Pos2) {
     p.circle_filled(at, xf.v(5.5).max(3.0), accent());
-    p.circle_stroke(at, xf.v(5.5).max(3.0), Stroke::new(1.5, theme::BG));
+    p.circle_stroke(at, xf.v(5.5).max(3.0), Stroke::new(1.5, theme::bg()));
 }
 
 fn draw_screen(p: &egui::Painter, xf: &Xf, text: &str) {
     let r = xf.rect(SCREEN[0], SCREEN[1], SCREEN[2], SCREEN[3]);
-    p.rect_filled(
-        r,
-        CornerRadius::same(xf.v(2.0) as u8),
-        Color32::from_rgb(6, 8, 11),
-    );
+    p.rect_filled(r, CornerRadius::same(xf.v(2.0) as u8), theme::palette().lcd);
     p.text(
         r.center(),
         egui::Align2::CENTER_CENTER,
@@ -889,9 +910,9 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
             let colour = if st.pressed {
                 on_accent()
             } else if st.lit() {
-                Color32::WHITE
+                theme::strong()
             } else {
-                INK.gamma_multiply(0.75)
+                theme::palette().ink.gamma_multiply(0.75)
             };
             p.text(
                 xf.q(*at),
@@ -922,7 +943,7 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
                 let colour = if st.pressed {
                     on_accent()
                 } else {
-                    Color32::WHITE
+                    theme::strong()
                 };
                 p.text(
                     c,

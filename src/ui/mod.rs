@@ -21,7 +21,7 @@ pub mod screen;
 pub mod theme;
 mod widgets;
 
-use theme::{BAD, BORDER, DIM, FAINT, OK, SIDEBAR, TEXT, WARN, accent};
+use theme::accent;
 use widgets::{Icon, card, card_titled, page_title, row, toggle_row};
 
 /// The menu: page, icon, name.
@@ -45,7 +45,7 @@ pub fn shell(app: &mut App, ui: &mut egui::Ui) {
         title_bar(app, ui, false);
         toast(app, ui);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::BG))
+            .frame(egui::Frame::new().fill(theme::bg()))
             .show(ui, |ui| screen::job_page(app, ui));
         return;
     }
@@ -64,7 +64,7 @@ pub fn shell(app: &mut App, ui: &mut egui::Ui) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::new()
-                .fill(theme::BG)
+                .fill(theme::bg())
                 .inner_margin(egui::Margin {
                     left: 28,
                     right: 18,
@@ -128,7 +128,7 @@ fn title_bar(app: &App, ui: &mut egui::Ui, refresh: bool) {
         .exact_size(44.0)
         .frame(
             egui::Frame::new()
-                .fill(theme::BG)
+                .fill(theme::bg())
                 .inner_margin(egui::Margin {
                     left: 28,
                     right: 6,
@@ -181,8 +181,8 @@ fn window_button(ui: &mut egui::Ui, which: Icon, tip: &str, close: bool) -> egui
     let (rect, r) = ui.allocate_exact_size(vec2(40.0, 30.0), egui::Sense::click());
     let (bg, fg) = match (r.hovered(), close) {
         (true, true) => (Color32::from_rgb(196, 43, 28), Color32::WHITE),
-        (true, false) => (theme::HOVER, TEXT),
-        _ => (Color32::TRANSPARENT, DIM),
+        (true, false) => (theme::hover(), theme::text()),
+        _ => (Color32::TRANSPARENT, theme::dim()),
     };
     ui.painter().rect_filled(rect, CornerRadius::same(8), bg);
     widgets::icon(
@@ -215,7 +215,7 @@ fn window_edges(ctx: &egui::Context) {
     .rect_stroke(
         full,
         0.0,
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0, theme::border()),
         egui::StrokeKind::Inside,
     );
 
@@ -264,7 +264,7 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
         .exact_size(232.0)
         .frame(
             egui::Frame::new()
-                .fill(SIDEBAR)
+                .fill(theme::sidebar())
                 .inner_margin(egui::Margin::symmetric(16, 20)),
         )
         .show(ui, |ui| {
@@ -277,14 +277,14 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(
                     RichText::new("APEX")
                         .font(theme::bold(24.0))
-                        .color(theme::SILVER),
+                        .color(theme::silver()),
                 );
                 ui.label(RichText::new("5").font(theme::bold(24.0)).color(accent()));
             });
             ui.label(
                 RichText::new("C O N T R O L")
                     .font(theme::medium(10.5))
-                    .color(FAINT),
+                    .color(theme::faint()),
             );
             ui.add_space(16.0);
 
@@ -303,8 +303,12 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
-                    widgets::icon(ui.painter(), rect, Icon::Shield, FAINT);
-                    ui.label(RichText::new(t("Protected mode")).size(12.0).color(FAINT));
+                    widgets::icon(ui.painter(), rect, Icon::Shield, theme::faint());
+                    ui.label(
+                        RichText::new(t("Protected mode"))
+                            .size(12.0)
+                            .color(theme::faint()),
+                    );
                 })
                 .response
                 .on_hover_text(t(
@@ -319,8 +323,8 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui) {
 /// The pad's state and its four profiles, on every page.
 fn device_badge(app: &mut App, ui: &mut egui::Ui) {
     egui::Frame::new()
-        .fill(theme::CARD)
-        .stroke(Stroke::new(1.0, BORDER))
+        .fill(theme::card())
+        .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(CornerRadius::same(12))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -328,37 +332,37 @@ fn device_badge(app: &mut App, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 4.0;
             let Some(i) = app.info.clone() else {
                 ui.horizontal(|ui| {
-                    status_dot(ui, BAD);
+                    status_dot(ui, theme::bad());
                     ui.label(
                         RichText::new(t("Not connected"))
                             .font(theme::medium(14.0))
-                            .color(TEXT),
+                            .color(theme::text()),
                     );
                 });
                 ui.label(
                     RichText::new(t("waiting for the controller…"))
                         .size(12.5)
-                        .color(DIM),
+                        .color(theme::dim()),
                 );
                 return;
             };
             ui.horizontal(|ui| {
-                status_dot(ui, OK);
+                status_dot(ui, theme::ok());
                 ui.label(
                     RichText::new(format!("Flydigi {}", i.model()))
                         .font(theme::medium(14.0))
-                        .color(TEXT),
+                        .color(theme::text()),
                 );
             });
             ui.horizontal(|ui| {
                 widgets::battery(ui, i.battery_level, i.charging);
                 let b = format!("{}%", i.battery_level as u32 * 20);
-                ui.label(RichText::new(b).size(12.5).color(DIM));
-                ui.label(RichText::new("·").color(FAINT));
+                ui.label(RichText::new(b).size(12.5).color(theme::dim()));
+                ui.label(RichText::new("·").color(theme::faint()));
                 ui.label(
                     RichText::new(if i.wired { t("cable") } else { t("dongle") })
                         .size(12.5)
-                        .color(DIM),
+                        .color(theme::dim()),
                 );
             });
             ui.add_space(6.0);
@@ -373,7 +377,7 @@ fn device_badge(app: &mut App, ui: &mut egui::Ui) {
                             shown
                         })
                         .size(12.5)
-                        .color(DIM),
+                        .color(theme::dim()),
                     )
                     .truncate(),
                 );
@@ -392,15 +396,15 @@ fn profile_switch(app: &mut App, ui: &mut egui::Ui) {
             let (rect, r) = ui.allocate_exact_size(vec2(w, 30.0), egui::Sense::click());
             let on = ui.ctx().animate_bool_responsive(r.id, active);
             let bg = if r.hovered() && !active {
-                theme::HOVER
+                theme::hover()
             } else {
-                theme::CARD_HI
+                theme::card_hi()
             };
             ui.painter().rect(
                 rect,
                 CornerRadius::same(8),
                 widgets::lerp_colour(bg, accent(), on),
-                Stroke::new(1.0, widgets::lerp_colour(BORDER, accent(), on)),
+                Stroke::new(1.0, widgets::lerp_colour(theme::border(), accent(), on)),
                 egui::StrokeKind::Inside,
             );
             ui.painter().text(
@@ -408,7 +412,11 @@ fn profile_switch(app: &mut App, ui: &mut egui::Ui) {
                 egui::Align2::CENTER_CENTER,
                 format!("P{}", slot + 1),
                 theme::medium(13.5),
-                if active { theme::on_accent() } else { DIM },
+                if active {
+                    theme::on_accent()
+                } else {
+                    theme::dim()
+                },
             );
             let r = r.on_hover_text(if active {
                 t("Active profile")
@@ -435,7 +443,7 @@ fn nav_item(app: &mut App, ui: &mut egui::Ui, tab: Tab, icon: Icon, label: &str)
     let on = ui.ctx().animate_bool_responsive(r.id, sel);
     let p = ui.painter();
     if sel || r.hovered() {
-        let bg = if sel { theme::CARD_HI } else { theme::CARD };
+        let bg = if sel { theme::card_hi() } else { theme::card() };
         p.rect_filled(rect, CornerRadius::same(10), bg);
     }
     if on > 0.0 {
@@ -448,9 +456,9 @@ fn nav_item(app: &mut App, ui: &mut egui::Ui, tab: Tab, icon: Icon, label: &str)
     let colour = if sel {
         accent()
     } else if r.hovered() {
-        TEXT
+        theme::text()
     } else {
-        DIM
+        theme::dim()
     };
     let ir =
         egui::Rect::from_center_size(pos2(rect.left() + 26.0, rect.center().y), vec2(18.0, 18.0));
@@ -460,10 +468,14 @@ fn nav_item(app: &mut App, ui: &mut egui::Ui, tab: Tab, icon: Icon, label: &str)
         egui::Align2::LEFT_CENTER,
         label,
         theme::medium(14.5),
-        if sel { TEXT } else { colour },
+        if sel { theme::text() } else { colour },
     );
     if tab == Tab::Profile && (app.profile_dirty() || app.flash_dirty) {
-        p.circle_filled(pos2(rect.right() - 16.0, rect.center().y), 4.0, WARN);
+        p.circle_filled(
+            pos2(rect.right() - 16.0, rect.center().y),
+            4.0,
+            theme::warn(),
+        );
         r.clone()
             .on_hover_text(t("The profile has unsaved changes"));
     }
@@ -489,7 +501,7 @@ fn toast(app: &App, ui: &mut egui::Ui) {
     if t.elapsed() > Duration::from_secs(5) {
         return;
     }
-    let colour = if *err { BAD } else { OK };
+    let colour = if *err { theme::bad() } else { theme::ok() };
     egui::Area::new(egui::Id::new("toast"))
         .anchor(
             egui::Align2::RIGHT_BOTTOM,
@@ -507,7 +519,7 @@ fn toast(app: &App, ui: &mut egui::Ui) {
         .interactable(false)
         .show(ui.ctx(), |ui| {
             egui::Frame::new()
-                .fill(theme::CARD_HI)
+                .fill(theme::card_hi())
                 .stroke(Stroke::new(1.0, colour.gamma_multiply(0.6)))
                 .corner_radius(CornerRadius::same(12))
                 .inner_margin(egui::Margin::symmetric(16, 12))
@@ -515,13 +527,13 @@ fn toast(app: &App, ui: &mut egui::Ui) {
                     offset: [0, 8],
                     blur: 24,
                     spread: 0,
-                    color: Color32::from_black_alpha(150),
+                    color: theme::palette().shadow,
                 })
                 .show(ui, |ui| {
                     ui.set_max_width(380.0);
                     ui.horizontal(|ui| {
                         status_dot(ui, colour);
-                        ui.label(RichText::new(msg).color(TEXT));
+                        ui.label(RichText::new(msg).color(theme::text()));
                     });
                 });
         });
@@ -544,23 +556,23 @@ fn disconnected(app: &mut App, ui: &mut egui::Ui) {
         ui.label(
             RichText::new(t("Controller not found"))
                 .font(theme::bold(24.0))
-                .color(TEXT),
+                .color(theme::text()),
         );
         ui.add_space(4.0);
         ui.label(
             RichText::new(t(
                 "Connect the Apex 5 by cable or through the dongle — the app will find it.",
             ))
-            .color(DIM),
+            .color(theme::dim()),
         );
-        ui.label(RichText::new(&app.status).size(12.5).color(FAINT));
+        ui.label(RichText::new(&app.status).size(12.5).color(theme::faint()));
         ui.add_space(4.0);
         ui.label(
             RichText::new(t(
                 "If the controller is connected but there is no access, install the udev rule.",
             ))
             .size(12.5)
-            .color(FAINT),
+            .color(theme::faint()),
         );
         if app.status.contains("udev") {
             ui.add_space(8.0);
@@ -636,22 +648,22 @@ fn about(app: &mut App, ui: &mut egui::Ui, info: &device::Info) {
             .num_columns(2)
             .spacing([28.0, 6.0])
             .show(ui, |ui| {
-                ui.label(RichText::new(t("Model")).color(DIM));
+                ui.label(RichText::new(t("Model")).color(theme::dim()));
                 ui.label(tr!(
                     "Flydigi {model} (type {kind})",
                     model = info.model(),
                     kind = info.device_type
                 ));
                 ui.end_row();
-                ui.label(RichText::new("UID").color(DIM));
+                ui.label(RichText::new("UID").color(theme::dim()));
                 ui.monospace(&info.uid);
                 ui.end_row();
                 for (name, v) in &info.firmware {
-                    ui.label(RichText::new(tr!("Firmware: {name}", name)).color(DIM));
+                    ui.label(RichText::new(tr!("Firmware: {name}", name)).color(theme::dim()));
                     ui.monospace(v);
                     ui.end_row();
                 }
-                ui.label(RichText::new(t("Name")).color(DIM))
+                ui.label(RichText::new(t("Name")).color(theme::dim()))
                     .on_hover_text(t(
                         "A service name the controller keeps in itself. Flydigi Space Station \
                          and other programs show it to tell several controllers apart. It is not \
@@ -668,7 +680,7 @@ fn about(app: &mut App, ui: &mut egui::Ui, info: &device::Info) {
                     ui.label(
                         RichText::new(format!("{n}/{NICKNAME_MAX}"))
                             .size(12.0)
-                            .color(FAINT),
+                            .color(theme::faint()),
                     );
                     let ok = n > 0 && n <= NICKNAME_MAX && app.nickname != info.nickname;
                     if ok && widgets::secondary(ui, t("Save"), true).clicked() {
@@ -708,7 +720,7 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
         card_titled(ui, &caption, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (tab, name, value, notable) in profile::summary(&p) {
-                let colour = if notable { accent() } else { TEXT };
+                let colour = if notable { accent() } else { theme::text() };
                 if widgets::link_row(ui, name, &value, colour).clicked() {
                     app.tab = Tab::Profile;
                     app.profile_tab = tab;
@@ -723,7 +735,7 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(
                     RichText::new(lighting::effect_name(led.effect))
                         .font(theme::medium(14.5))
-                        .color(TEXT),
+                        .color(theme::text()),
                 );
                 for c in led.colours.iter().take(5) {
                     let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
@@ -731,12 +743,12 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
                         rect.center(),
                         7.0,
                         Color32::from_rgb(c[0], c[1], c[2]),
-                        Stroke::new(1.0, BORDER),
+                        Stroke::new(1.0, theme::border()),
                     );
                 }
             });
             ui.horizontal(|ui| {
-                ui.label(RichText::new(t("Brightness")).color(DIM));
+                ui.label(RichText::new(t("Brightness")).color(theme::dim()));
                 let mut b = led.cfg.brightness();
                 ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(80.0);
                 if ui
@@ -762,7 +774,11 @@ fn status_cards(app: &mut App, ui: &mut egui::Ui) {
                     {
                         app.save_led();
                     }
-                    ui.label(RichText::new(t("not saved")).size(12.5).color(WARN));
+                    ui.label(
+                        RichText::new(t("not saved"))
+                            .size(12.5)
+                            .color(theme::warn()),
+                    );
                 });
             }
         });
@@ -854,6 +870,18 @@ fn app_settings(ui: &mut egui::Ui) {
             format!("{} · Language", t("Language"))
         };
         row(ui, &title, "", language_menu);
+        widgets::separator(ui);
+        row(ui, t("Theme"), "", |ui| {
+            let mut c = theme::choice();
+            let items = [
+                (theme::Choice::System, t("As in the system#theme")),
+                (theme::Choice::Dark, t("Dark#theme")),
+                (theme::Choice::Light, t("Light#theme")),
+            ];
+            if widgets::segmented(ui, &mut c, &items) {
+                theme::pick(ui.ctx(), c);
+            }
+        });
     });
 }
 
@@ -961,7 +989,7 @@ fn pad_settings(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(tr!("The controller is taken over by {program}. The profile does not apply, regular input is off.", program = f.control_by))
-                    .color(WARN),
+                    .color(theme::warn()),
                 );
             }
         });

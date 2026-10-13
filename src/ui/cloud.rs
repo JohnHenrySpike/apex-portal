@@ -12,7 +12,7 @@ use apex5::profile::Profile;
 use apex5::screen::{self, Fit};
 use eframe::egui::{self, CornerRadius, RichText, Stroke, TextureHandle, vec2};
 
-use super::theme::{BAD, BORDER, CARD_HI, DIM, OK, TEXT, WARN, accent};
+use super::theme::{self, accent};
 use super::widgets::{self, card_titled, hint, row};
 
 /// A request running off the UI thread and what it brought back.
@@ -102,7 +102,7 @@ fn spinner(ui: &mut egui::Ui) {
 }
 
 fn error(ui: &mut egui::Ui, e: &str) {
-    ui.label(RichText::new(e).color(BAD));
+    ui.label(RichText::new(e).color(theme::bad()));
 }
 
 // ------------------------------------------------------------------ firmware
@@ -166,7 +166,7 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
     };
     if news.is_empty() {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(t("All firmware is up to date")).color(OK));
+            ui.label(RichText::new(t("All firmware is up to date")).color(theme::ok()));
             answer(ui);
         });
         return;
@@ -180,7 +180,7 @@ pub fn firmware(st: &mut State, info: &Info, ui: &mut egui::Ui) {
                 latest = n.latest,
                 current = n.current
             ))
-            .color(WARN),
+            .color(theme::warn()),
         );
     }
     ui.add_space(4.0);
@@ -227,7 +227,7 @@ pub fn game_presets(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
                          grip rumble also needs to be on in the profile.",
                         name
                     ))
-                    .color(OK),
+                    .color(theme::ok()),
                 )
                 .wrap(),
             );
@@ -243,8 +243,8 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
     let r = egui::Modal::new(egui::Id::new("game_presets"))
         .frame(
             egui::Frame::new()
-                .fill(super::theme::CARD)
-                .stroke(Stroke::new(1.0, BORDER))
+                .fill(super::theme::card())
+                .stroke(Stroke::new(1.0, theme::border()))
                 .corner_radius(CornerRadius::same(14))
                 .inner_margin(egui::Margin::same(20)),
         )
@@ -253,7 +253,7 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
             ui.label(
                 RichText::new(t("Trigger preset for a game"))
                     .font(super::theme::bold(18.0))
-                    .color(TEXT),
+                    .color(theme::text()),
             );
             ui.add_space(8.0);
             let busy = st.games.busy();
@@ -305,7 +305,7 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
                         let (name, detail) = if sel {
                             (name, detail)
                         } else {
-                            (name.color(TEXT), detail.color(DIM))
+                            (name.color(theme::text()), detail.color(theme::dim()))
                         };
                         let r = ui.add(
                             egui::Button::selectable(sel, name)
@@ -340,7 +340,7 @@ fn game_dialog(st: &mut State, p: &mut Profile, ui: &mut egui::Ui) {
                         right = detail(r)
                     )
                 };
-                ui.label(RichText::new(text).size(12.5).color(DIM));
+                ui.label(RichText::new(text).size(12.5).color(theme::dim()));
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -496,8 +496,8 @@ pub fn gallery(st: &mut State, enabled: bool, ui: &mut egui::Ui) -> Option<Pictu
                             ui.painter().rect(
                                 rect,
                                 CornerRadius::same(4),
-                                CARD_HI,
-                                Stroke::new(1.0, BORDER),
+                                theme::card_hi(),
+                                Stroke::new(1.0, theme::border()),
                                 egui::StrokeKind::Inside,
                             );
                             r
