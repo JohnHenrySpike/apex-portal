@@ -591,9 +591,9 @@ impl Worker {
     }
 
     /// Vendor reports go to the tester and, for motion, to the bridge; the
-    /// gamepad node goes to the tester.
+    /// gamepad node goes to the tester. The pages that show them repaint at
+    /// their own pace, not on every report.
     fn pump_input(&mut self) {
-        let mut got = false;
         loop {
             let r = self.dev().read_raw(Duration::ZERO);
             match r {
@@ -601,7 +601,6 @@ impl Worker {
                     if let Some(s) = InputState::parse(&raw) {
                         if self.streaming {
                             self.input.lock().unwrap().record(s);
-                            got = true;
                         }
                         if let Some(b) = self.bridge.as_mut() {
                             b.motion(&s);
@@ -621,14 +620,10 @@ impl Worker {
                     let mut live = self.input.lock().unwrap();
                     for o in reports {
                         live.record_output(o);
-                        got = true;
                     }
                 }
                 Err(_) => self.pad = None,
             }
-        }
-        if got && let Some(r) = &self.repaint {
-            r();
         }
     }
 

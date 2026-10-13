@@ -921,8 +921,7 @@ fn shown_frame(ui: &egui::Ui, n: usize, interval_ms: u32) -> usize {
         return 0;
     }
     let ms = (ui.input(|i| i.time) * 1000.0) as u64;
-    ui.ctx()
-        .request_repaint_after(Duration::from_millis(interval_ms as u64));
+    super::repaint_every(ui.ctx(), Duration::from_millis(interval_ms as u64));
     (ms / interval_ms.max(10) as u64) as usize % n
 }
 

@@ -827,8 +827,7 @@ fn sticks(p: &mut Profile, input: Option<InputState>, ui: &mut egui::Ui) {
         stick_card(p, 1, live.map(|l| l[1]), ui);
     }
     // The live preview needs a steady stream of frames.
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(16));
+    super::repaint_every(ui.ctx(), super::LIVE);
     ui.add_space(8.0);
     ui.label(
         RichText::new(t("You can drag the points on the graph."))

@@ -1,7 +1,6 @@
 //! Live input tester fed by the pad's vendor input stream.
 
 use std::cell::Cell;
-use std::time::Duration;
 
 use apex5::device::{BUTTONS, InputState};
 use apex5::lang::t;
@@ -62,7 +61,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         t("Input test"),
         t("Press buttons and move the sticks — everything shows in real time"),
     );
-    ui.ctx().request_repaint_after(Duration::from_millis(16));
+    super::repaint_every(ui.ctx(), super::LIVE);
     let Some(s) = app.input() else {
         card(ui, |ui| {
             ui.horizontal(|ui| {

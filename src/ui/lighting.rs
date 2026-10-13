@@ -104,7 +104,7 @@ fn preview_card(app: &mut App, ui: &mut egui::Ui) {
         strip(ui, &frame, bright);
     });
     if led.effect.animated() {
-        ui.ctx().request_repaint_after(Duration::from_millis(33));
+        super::repaint_every(ui.ctx(), Duration::from_millis(33));
     }
 }
 
@@ -376,7 +376,7 @@ fn effect_tile(ui: &mut egui::Ui, w: f32, e: Effect, selected: bool, colours: &[
         widgets::led(p, cr, 2, *c, 1.0);
     }
     if e.animated() {
-        ui.ctx().request_repaint_after(Duration::from_millis(50));
+        super::repaint_every(ui.ctx(), Duration::from_millis(50));
     }
     r.clicked()
 }

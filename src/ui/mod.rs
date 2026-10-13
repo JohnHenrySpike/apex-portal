@@ -107,6 +107,17 @@ fn page(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// The pace of pages that show the pad live: the input test, the sticks.
+pub const LIVE: Duration = Duration::from_micros(1_000_000 / 60);
+
+/// Asks for the next frame `period` from now. egui shortens every timed
+/// request by a frame it guesses at 1/60 s, so a 30 fps animation ran at 60
+/// and anything faster at the monitor's full rate; this adds the guess back.
+pub fn repaint_every(ctx: &egui::Context, period: Duration) {
+    let guess = ctx.input(|i| i.predicted_dt);
+    ctx.request_repaint_after(period + Duration::from_secs_f32(guess));
+}
+
 // ------------------------------------------------------------------ window
 
 /// The compositor takes the pointer while it moves or resizes the window and
@@ -711,7 +722,7 @@ fn overview(app: &mut App, ui: &mut egui::Ui) {
                 },
             );
             if app.led.as_ref().is_some_and(|l| l.effect.animated()) {
-                ui.ctx().request_repaint_after(Duration::from_millis(33));
+                repaint_every(ui.ctx(), Duration::from_millis(33));
             }
         });
     };
