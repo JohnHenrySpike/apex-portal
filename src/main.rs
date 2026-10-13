@@ -400,28 +400,12 @@ impl App {
             Event::Error(m) => self.toast = Some((m, true, Instant::now())),
         }
     }
-
-    /// Accent colour follows the first colour the pad is lit with.
-    fn accent_colour(&self) -> Option<[u8; 3]> {
-        let led = self.led.as_ref()?;
-        if led.effect == Effect::Off || led.cfg.brightness() == 0 {
-            return None;
-        }
-        if led.effect == Effect::Rainbow {
-            None
-        } else {
-            led.colours.first().copied()
-        }
-    }
 }
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(ev) = self.h.rx.try_recv() {
             self.on_event(ev);
-        }
-        if ui::theme::set_accent_from_led(self.accent_colour()) {
-            ui::theme::apply_style(ctx);
         }
         // Debounced live lighting writes.
         if let Some(led) = self.led.as_mut()
