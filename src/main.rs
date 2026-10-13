@@ -464,6 +464,10 @@ impl eframe::App for App {
         ui::shell(self, ui);
     }
 
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        ui::window_input(ctx, raw);
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if self.streaming {
             self.streaming = false;
@@ -483,6 +487,10 @@ impl eframe::App for Window<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.0.ui(ui, frame);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.0.raw_input_hook(ctx, raw);
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {

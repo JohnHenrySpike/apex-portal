@@ -109,11 +109,90 @@ fn page(app: &mut App, ui: &mut egui::Ui) {
 
 // ------------------------------------------------------------------ window
 
+/// The compositor takes the pointer while it moves or resizes the window and
+/// keeps the button's release to itself. egui would think the press never
+/// ended: the title bar would stay dragged, and nothing else would light up
+/// under the pointer until the next click.
+#[derive(Clone, Copy)]
+enum Grab {
+    /// The window is being moved: the release has to be made up.
+    Move,
+    /// A press on the edge, kept from the widgets under it: resize this way.
+    Resize(egui::ResizeDirection),
+}
+
+fn grab_id() -> egui::Id {
+    egui::Id::new("window_grab")
+}
+
+fn take_grab(ctx: &egui::Context) -> Option<Grab> {
+    ctx.data_mut(|d| {
+        let g = d.get_temp::<Grab>(grab_id());
+        d.remove::<Grab>(grab_id());
+        g
+    })
+}
+
+/// Fixes up the input before each frame for the compositor's grabs.
+pub fn window_input(ctx: &egui::Context, raw: &mut egui::RawInput) {
+    use egui::{Event, PointerButton};
+    let released = |e: &Event| {
+        matches!(
+            e,
+            Event::PointerButton {
+                button: PointerButton::Primary,
+                pressed: false,
+                ..
+            }
+        )
+    };
+    if let Some(Grab::Move) = take_grab(ctx)
+        && !raw.events.iter().any(released)
+        && let Some((pos, modifiers)) = ctx.input(|i| {
+            i.pointer
+                .primary_down()
+                .then(|| (i.pointer.interact_pos(), i.modifiers))
+        })
+    {
+        raw.events.insert(
+            0,
+            Event::PointerButton {
+                pos: pos.unwrap_or_default(),
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers,
+            },
+        );
+    }
+
+    let v = raw.viewports.get(&raw.viewport_id);
+    let max = v.is_some_and(|v| v.maximized.unwrap_or(false) || v.fullscreen.unwrap_or(false));
+    let Some(full) = raw.screen_rect.filter(|_| !max) else {
+        return;
+    };
+    raw.events.retain(|e| match e {
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: true,
+            ..
+        } => match edge(full, *pos) {
+            Some((d, _)) => {
+                ctx.data_mut(|m| m.insert_temp(grab_id(), Grab::Resize(d)));
+                false
+            }
+            None => true,
+        },
+        _ => true,
+    });
+}
+
 /// Moves the window when dragged; a double click maximizes it.
 fn drag_area(ui: &mut egui::Ui, rect: egui::Rect, id: &str) {
     let r = ui.interact(rect, egui::Id::new(id), egui::Sense::click_and_drag());
     if r.drag_started_by(egui::PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        ui.ctx().data_mut(|d| d.insert_temp(grab_id(), Grab::Move));
     }
     if r.double_clicked() {
         let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -197,7 +276,6 @@ fn window_button(ui: &mut egui::Ui, which: Icon, tip: &str, close: bool) -> egui
 /// Without the system frame the window's edges resize it, and a hairline
 /// marks them.
 fn window_edges(ctx: &egui::Context) {
-    use egui::{CursorIcon as C, ResizeDirection as D};
     let (max, full) = ctx.input(|i| {
         let v = i.viewport();
         (
@@ -219,17 +297,32 @@ fn window_edges(ctx: &egui::Context) {
         egui::StrokeKind::Inside,
     );
 
-    let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else {
-        return;
-    };
+    // the press itself never reaches the widgets: see `window_input`
+    if let Some(Grab::Resize(d)) = take_grab(ctx) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(d));
+    }
+    if let Some((_, cursor)) = ctx
+        .input(|i| i.pointer.hover_pos())
+        .and_then(|pos| edge(full, pos))
+    {
+        ctx.set_cursor_icon(cursor);
+    }
+}
+
+/// Which way the window's edge at `pos` resizes it, if `pos` is on one.
+fn edge(full: egui::Rect, pos: egui::Pos2) -> Option<(egui::ResizeDirection, egui::CursorIcon)> {
+    use egui::{CursorIcon as C, ResizeDirection as D};
     const EDGE: f32 = 5.0;
     const CORNER: f32 = 14.0;
+    if !full.contains(pos) {
+        return None;
+    }
     let (l, r) = (pos.x - full.left() < EDGE, full.right() - pos.x < EDGE);
     let (t, b) = (pos.y - full.top() < EDGE, full.bottom() - pos.y < EDGE);
     // corners are easier to catch a little further along the edge
     let (lc, rc) = (pos.x - full.left() < CORNER, full.right() - pos.x < CORNER);
     let (tc, bc) = (pos.y - full.top() < CORNER, full.bottom() - pos.y < CORNER);
-    let dir = if (t && lc) || (l && tc) {
+    if (t && lc) || (l && tc) {
         Some((D::NorthWest, C::ResizeNorthWest))
     } else if (t && rc) || (r && tc) {
         Some((D::NorthEast, C::ResizeNorthEast))
@@ -247,12 +340,6 @@ fn window_edges(ctx: &egui::Context) {
         Some((D::South, C::ResizeSouth))
     } else {
         None
-    };
-    if let Some((d, cursor)) = dir {
-        ctx.set_cursor_icon(cursor);
-        if ctx.input(|i| i.pointer.primary_pressed()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(d));
-        }
     }
 }
 
@@ -1056,4 +1143,82 @@ pub fn combo(
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, PointerButton, Pos2, RawInput, Rect};
+
+    /// A title bar to drag over a menu item; true if the item lit up.
+    fn frame(
+        ctx: &egui::Context,
+        events: Vec<Event>,
+        hook: bool,
+    ) -> (bool, Vec<egui::ViewportCommand>) {
+        let mut raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+            events,
+            ..Default::default()
+        };
+        if hook {
+            window_input(ctx, &mut raw);
+        }
+        let mut lit = false;
+        let out = ctx.run_ui(raw, |ui| {
+            window_edges(ui.ctx());
+            drag_area(ui, Rect::from_min_size(Pos2::ZERO, vec2(800.0, 40.0)), "t");
+            let item = Rect::from_min_size(pos2(20.0, 100.0), vec2(200.0, 38.0));
+            lit = ui
+                .interact(item, egui::Id::new("item"), egui::Sense::click())
+                .hovered();
+        });
+        let cmds = out
+            .viewport_output
+            .values()
+            .flat_map(|v| v.commands.clone())
+            .collect();
+        (lit, cmds)
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
+
+    fn moved_window(hook: bool) -> bool {
+        let ctx = egui::Context::default();
+        frame(&ctx, vec![Event::PointerMoved(pos2(300.0, 20.0))], hook);
+        frame(&ctx, vec![button(pos2(300.0, 20.0), true)], hook);
+        let (_, cmds) = frame(&ctx, vec![Event::PointerMoved(pos2(340.0, 22.0))], hook);
+        assert!(cmds.contains(&egui::ViewportCommand::StartDrag));
+        // the compositor moves the window and keeps the release
+        frame(&ctx, vec![Event::PointerGone], hook);
+        frame(&ctx, vec![Event::PointerMoved(pos2(60.0, 110.0))], hook).0
+    }
+
+    #[test]
+    fn hover_after_moving_the_window() {
+        assert!(
+            !moved_window(false),
+            "the test should show the bug without the fix"
+        );
+        assert!(moved_window(true));
+    }
+
+    #[test]
+    fn hover_after_resizing_the_window() {
+        let ctx = egui::Context::default();
+        frame(&ctx, vec![Event::PointerMoved(pos2(300.0, 2.0))], true);
+        let (_, cmds) = frame(&ctx, vec![button(pos2(300.0, 2.0), true)], true);
+        assert!(cmds.contains(&egui::ViewportCommand::BeginResize(
+            egui::ResizeDirection::North
+        )));
+        frame(&ctx, vec![Event::PointerGone], true);
+        assert!(frame(&ctx, vec![Event::PointerMoved(pos2(60.0, 110.0))], true).0);
+    }
 }
