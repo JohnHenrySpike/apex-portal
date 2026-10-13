@@ -189,7 +189,10 @@ fn steam_hint(ui: &mut egui::Ui) {
         .is_none_or(|t| t.elapsed() > Duration::from_secs(1))
     {
         l.checked = Some(Instant::now());
-        l.running = steam_running();
+        // a screenshot run shows the page as before the first start
+        if std::env::var_os("APEX5_SCREENSHOTS").is_none() {
+            l.running = steam_running();
+        }
     }
     let (label, note, color) = match (&l.phase, l.running) {
         (Phase::Closing, _) => (t("Start Steam"), t("Closing Steam…").into(), theme::dim()),
