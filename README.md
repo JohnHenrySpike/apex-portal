@@ -149,8 +149,8 @@ icon or starting the app again brings the window back; **Quit** in the icon's me
 A second copy doesn't start; it shows the first one's window instead.
 
 > [!IMPORTANT]
-> Steam opens the Apex with its own driver and gives games that instead of the DualSense. Close Steam before playing
-> and start it like this:
+> Steam opens the Apex with its own driver and gives games that instead of the DualSense. Start Steam with the
+> **Start Steam** button on the DualSense mode page (it restarts a Steam that is already running), or yourself like this:
 >
 > ```bash
 > env SDL_GAMECONTROLLER_IGNORE_DEVICES=0x37d7/0x2501 SDL_JOYSTICK_IGNORE_DEVICES=0x37d7/0x2501 steam

@@ -149,7 +149,8 @@ sudo udevadm control --reload && sudo udevadm trigger
 приложение. Второй экземпляр не запускается, а показывает окно первого.
 
 > [!IMPORTANT]
-> Steam сам открывает Apex своим драйвером и отдаёт играм его, а не DualSense. Перед игрой закройте Steam и запустите так:
+> Steam сам открывает Apex своим драйвером и отдаёт играм его, а не DualSense. Запустите Steam кнопкой **«Запустить Steam»**
+> на странице режима DualSense (уже запущенный Steam она перезапустит) или сами так:
 >
 > ```bash
 > env SDL_GAMECONTROLLER_IGNORE_DEVICES=0x37d7/0x2501 SDL_JOYSTICK_IGNORE_DEVICES=0x37d7/0x2501 steam
