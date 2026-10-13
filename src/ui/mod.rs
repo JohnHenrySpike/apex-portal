@@ -1176,7 +1176,7 @@ mod tests {
             window_input(ctx, &mut raw);
         }
         let mut lit = false;
-        let out = ctx.run_ui(raw, |ui| {
+        let mut out = ctx.run_ui(raw, |ui| {
             window_edges(ui.ctx());
             drag_area(ui, Rect::from_min_size(Pos2::ZERO, vec2(800.0, 40.0)), "t");
             let item = Rect::from_min_size(pos2(20.0, 100.0), vec2(200.0, 38.0));
@@ -1184,6 +1184,8 @@ mod tests {
                 .interact(item, egui::Id::new("item"), egui::Sense::click())
                 .hovered();
         });
+        // no painter here; debug builds panic on dropping unapplied textures
+        out.textures_delta.clear();
         let cmds = out
             .viewport_output
             .values()
