@@ -338,6 +338,10 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
         .filter(|id| is_remapped(p, *id))
         .collect();
     let wide = ui.available_width() > 860.0;
+    // the target hovered in the key editor, drawn after the pad: last frame's
+    let hinted = ui
+        .ctx()
+        .data(|d| d.get_temp::<u8>(egui::Id::new(TARGET_HOVER)));
     let mut state = (p, selected);
     let left = |(p, selected): &mut (&mut Profile, &mut u8), ui: &mut egui::Ui| {
         card(ui, |ui| {
@@ -348,6 +352,7 @@ fn buttons(p: &mut Profile, macros: &[Macro], selected: &mut u8, screen: &str, u
                 &pad::Opts {
                     interactive: true,
                     selected: Some(**selected),
+                    hinted,
                     marked: &marked,
                     show_tiles: true,
                     screen: Some(screen),
@@ -433,9 +438,13 @@ fn assignments(p: &Profile, selected: &mut u8, marked: &[u8], ui: &mut egui::Ui)
     });
 }
 
+/// Memory key of the "Works as" target under the pointer, as a pad key.
+const TARGET_HOVER: &str = "works_as_hover";
+
 fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
     let mut k = p.key(id);
     let before = k;
+    let mut pointed = None;
     card(ui, |ui| {
         ui.label(
             RichText::new(key_title(id))
@@ -469,7 +478,11 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
                         } else {
                             k.target == *t
                         };
-                        if chip(ui, vec2(w, 32.0), sel, name).clicked() {
+                        let r = chip(ui, vec2(w, 32.0), sel, name);
+                        if r.hovered() {
+                            pointed = Some(if *t == TARGET_IDENTITY { id } else { *t });
+                        }
+                        if r.clicked() {
                             k.target = *t;
                         }
                     }
@@ -542,6 +555,18 @@ fn key_editor(p: &mut Profile, id: u8, macros: &[Macro], ui: &mut egui::Ui) {
     });
     if k != before {
         p.set_key(id, k);
+    }
+    let hover_id = egui::Id::new(TARGET_HOVER);
+    if ui.ctx().data(|d| d.get_temp::<u8>(hover_id)) != pointed {
+        ui.ctx().data_mut(|d| match pointed {
+            Some(t) => {
+                d.insert_temp(hover_id, t);
+            }
+            None => {
+                d.remove::<u8>(hover_id);
+            }
+        });
+        ui.ctx().request_repaint();
     }
 }
 

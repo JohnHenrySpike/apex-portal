@@ -82,6 +82,8 @@ pub struct Opts<'a> {
     pub brightness: f32,
     pub interactive: bool,
     pub selected: Option<u8>,
+    /// A key pointed at from elsewhere, e.g. a target in the key editor.
+    pub hinted: Option<u8>,
     pub marked: &'a [u8],
     pub pressed: &'a [u8],
     pub sticks: Option<[(f32, f32); 2]>,
@@ -627,6 +629,7 @@ impl Xf {
 #[derive(Clone, Copy, Default)]
 struct KeyState {
     hovered: bool,
+    hinted: bool,
     selected: bool,
     pressed: bool,
     marked: bool,
@@ -634,7 +637,7 @@ struct KeyState {
 
 impl KeyState {
     fn lit(&self) -> bool {
-        self.hovered || self.selected || self.pressed
+        self.hovered || self.hinted || self.selected || self.pressed
     }
 }
 
@@ -646,12 +649,14 @@ fn overlay(p: &egui::Painter, xf: &Xf, a: &Area, st: KeyState, level: f32, shift
         acc.gamma_multiply(0.7)
     } else if st.selected {
         acc.gamma_multiply(0.35)
+    } else if st.hinted {
+        acc.gamma_multiply(0.2)
     } else if st.hovered {
         theme::wash()
     } else {
         Color32::TRANSPARENT
     };
-    let stroke = if st.pressed || st.selected {
+    let stroke = if st.pressed || st.selected || st.hinted {
         Stroke::new(2.0, acc)
     } else if st.hovered {
         Stroke::new(1.5, acc.gamma_multiply(0.7))
@@ -874,6 +879,7 @@ pub fn show(ui: &mut Ui, size: Vec2, o: &Opts) -> PadResponse {
     let p = ui.painter_at(rect);
     let state = |id: u8| KeyState {
         hovered: hovered == Some(id),
+        hinted: o.hinted == Some(id),
         selected: o.selected == Some(id),
         pressed: o.pressed.contains(&id),
         marked: o.marked.contains(&id),
